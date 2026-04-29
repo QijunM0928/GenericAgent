@@ -83,6 +83,7 @@ memory/L4_raw_sessions/*
 !memory/vision_api.template.py
 !memory/affordance_vlm.py
 !memory/discovery_engine.py
+!memory/affordance_cli.py
 !memory/utils/
 
 # Memory management
