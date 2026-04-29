@@ -81,6 +81,7 @@ memory/L4_raw_sessions/*
 !memory/vision_sop.md
 !memory/ui_detect.py
 !memory/vision_api.template.py
+!memory/utils/
 
 # Memory management
 !memory/memory_cleanup_sop.md
