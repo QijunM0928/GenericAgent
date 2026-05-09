@@ -15,6 +15,10 @@ VER, MSG_USER, MSG_BOT, ITEM_TEXT, STATE_FINISH = '2.1.8', 1, 2, 1, 2
 ITEM_IMAGE, ITEM_FILE, ITEM_VIDEO = 2, 4, 5
 CDN_BASE = 'https://novac2c.cdn.weixin.qq.com/c2c'
 
+# ── Group chat config ──
+GROUP_REPLY_MODE = 'at'  # 'at'=@触发才回复, 'all'=回复所有消息
+BOT_NAME = 'Agent'       # 群聊中被@的名字（不区分大小写）
+
 def _uin():
     return base64.b64encode(str(struct.unpack('>I', os.urandom(4))[0]).encode()).decode()
 
@@ -51,18 +55,27 @@ class WxBotClient:
         print(f'[QR登录] ID: {qr_id}')
         if url:
             img = self._tf.parent / 'wx_qr.png'
-            qrcode.make(url).save(str(img)); webbrowser.open(str(img))
+            qrcode.make(url).save(str(img))
+            # Print QR as ASCII art in terminal (works everywhere)
+            print('─' * 50, file=sys.__stdout__)
+            qr_obj = qrcode.QRCode()
+            qr_obj.add_data(url)
+            qr_obj.print_ascii(invert=True, out=sys.__stdout__)
+            print('─' * 50, file=sys.__stdout__)
+            print(f'📱 用微信扫描上方二维码 或 打开图片: {img}', file=sys.__stdout__)
+            print('─' * 50, file=sys.__stdout__)
+            webbrowser.open(str(img))
         last = ''
         while True:
             time.sleep(poll_interval)
             try: s = requests.get(f'{API}/ilink/bot/get_qrcode_status', params={'qrcode': qr_id}, timeout=60).json()
             except requests.exceptions.ReadTimeout: continue
             st = s.get('status', '')
-            if st != last: print(f'  状态: {st}'); last = st
+            if st != last: print(f'  状态: {st}', file=sys.__stdout__); last = st
             if st == 'confirmed':
                 self.token, self.bot_id = s.get('bot_token', ''), s.get('ilink_bot_id', '')
                 self._save(login_time=time.strftime('%Y-%m-%d %H:%M:%S'))
-                print(f'[QR登录] 成功! bot_id={self.bot_id}')
+                print(f'[QR登录] 成功! bot_id={self.bot_id}', file=sys.__stdout__)
                 return s
             if st == 'expired': raise RuntimeError('二维码过期')
 
@@ -81,18 +94,21 @@ class WxBotClient:
         if nb: self._buf = nb; self._save()
         return resp.get('msgs') or []
 
-    def send_text(self, to_user_id, text, context_token=''):
+    def send_text(self, to_user_id, text, context_token='', room_id=''):
         msg = {'from_user_id': '', 'to_user_id': to_user_id,
                'client_id': f'pyclient-{uuid.uuid4().hex[:16]}',
                'message_type': MSG_BOT, 'message_state': STATE_FINISH,
                'item_list': [{'type': ITEM_TEXT, 'text_item': {'text': text}}]}
         if context_token: msg['context_token'] = context_token
+        if room_id: msg['room_id'] = room_id
         return self._post('ilink/bot/sendmessage', {'msg': msg, 'base_info': {'channel_version': VER}})
 
-    def send_typing(self, to_user_id, typing_ticket='', cancel=False):
-        return self._post('ilink/bot/sendtyping', {
+    def send_typing(self, to_user_id, typing_ticket='', cancel=False, room_id=''):
+        body = {
             'to_user_id': to_user_id, 'typing_ticket': typing_ticket,
-            'typing_status': 2 if cancel else 1, 'base_info': {'channel_version': VER}})
+            'typing_status': 2 if cancel else 1, 'base_info': {'channel_version': VER}}
+        if room_id: body['room_id'] = room_id
+        return self._post('ilink/bot/sendtyping', body)
 
     def _enc(self, raw, aes_key):
         pad = 16 - (len(raw) % 16)
@@ -121,7 +137,7 @@ class WxBotClient:
                 print(f'[WX] CDN upload retry {attempt}: {e}', file=sys.__stdout__)
         raise last_err
 
-    def _send_media(self, to_user_id, file_path, media_type, item_type, item_key, context_token=''):
+    def _send_media(self, to_user_id, file_path, media_type, item_type, item_key, context_token='', room_id=''):
         fp = Path(file_path)
         raw = fp.read_bytes()
         filekey = uuid.uuid4().hex
@@ -132,6 +148,7 @@ class WxBotClient:
             'rawsize': len(raw), 'rawfilemd5': hashlib.md5(raw).hexdigest(),
             'filesize': ciphertext_size, 'no_need_thumb': True,
             'aeskey': aes_key.hex(), 'base_info': {'channel_version': VER}}
+        if room_id: body['room_id'] = room_id
         resp = self._post('ilink/bot/getuploadurl', body)
         upload_param = resp.get('upload_param', '')
         upload_url = resp.get('upload_full_url', '')
@@ -149,16 +166,17 @@ class WxBotClient:
                'message_type': MSG_BOT, 'message_state': STATE_FINISH,
                'item_list': [{'type': item_type, item_key: item}]}
         if context_token: msg['context_token'] = context_token
+        if room_id: msg['room_id'] = room_id
         return self._post('ilink/bot/sendmessage', {'msg': msg, 'base_info': {'channel_version': VER}})
 
-    def send_file(self, to_user_id, file_path, context_token=''):
-        return self._send_media(to_user_id, file_path, 3, ITEM_FILE, 'file_item', context_token)
+    def send_file(self, to_user_id, file_path, context_token='', room_id=''):
+        return self._send_media(to_user_id, file_path, 3, ITEM_FILE, 'file_item', context_token, room_id)
 
-    def send_image(self, to_user_id, file_path, context_token=''):
-        return self._send_media(to_user_id, file_path, 1, ITEM_IMAGE, 'image_item', context_token)
+    def send_image(self, to_user_id, file_path, context_token='', room_id=''):
+        return self._send_media(to_user_id, file_path, 1, ITEM_IMAGE, 'image_item', context_token, room_id)
 
-    def send_video(self, to_user_id, file_path, context_token=''):
-        return self._send_media(to_user_id, file_path, 2, ITEM_VIDEO, 'video_item', context_token)
+    def send_video(self, to_user_id, file_path, context_token='', room_id=''):
+        return self._send_media(to_user_id, file_path, 2, ITEM_VIDEO, 'video_item', context_token, room_id)
 
     @staticmethod
     def extract_text(msg):
@@ -256,12 +274,33 @@ def _split(text, limit=1800):
     if cur: chunks.append(cur)
     return chunks or ['...']
 
+def _is_at_me(text):
+    """检查消息是否@了机器人 (移除@前缀后返回剩余文本，否则返回None)"""
+    if not text: return None
+    for prefix in (f'@{BOT_NAME}', f'@{BOT_NAME.lower()}', f'@{BOT_NAME.upper()}'):
+        if text.lower().startswith(prefix.lower()):
+            rest = text[len(prefix):].strip()
+            return rest if rest else ''
+    return None
+
 def on_message(bot, msg):
     text = bot.extract_text(msg).strip()
     uid = msg.get('from_user_id', '')
     ctx = msg.get('context_token', '')
+    room_id = msg.get('room_id', '')  # 群聊时会有room_id
+    is_group = bool(room_id)
     media_paths = _dl_media(msg.get('item_list', []))
     if not text and not media_paths: return
+
+    # ── 群聊过滤 ──
+    if is_group:
+        at_rest = _is_at_me(text)
+        if GROUP_REPLY_MODE == 'at':
+            if at_rest is None: return  # 没@我，跳过
+            text = at_rest  # 去掉@前缀
+        # 如果消息只剩@没有内容，不处理
+        if not text and not media_paths: return
+
     if media_paths:
         text = (text + '\n' if text else '') + '\n'.join(f'[用户发送文件: {p}]' for p in media_paths)
     print(f'[WX] 收到: {text[:80]}', file=sys.__stdout__)
@@ -269,25 +308,25 @@ def on_message(bot, msg):
     # Commands
     if text in ('/stop', '/abort'):
         agent.abort()
-        bot.send_text(uid, '已停止', context_token=ctx)
+        bot.send_text(uid, '已停止', context_token=ctx, room_id=room_id)
         return
     if text.startswith('/llm'):
         args = text.split()
         if len(args) > 1:
             try:
                 n = int(args[1]); agent.next_llm(n)
-                bot.send_text(uid, f'切换到 [{agent.llm_no}] {agent.get_llm_name()}', context_token=ctx)
+                bot.send_text(uid, f'切换到 [{agent.llm_no}] {agent.get_llm_name()}', context_token=ctx, room_id=room_id)
             except (ValueError, IndexError):
-                bot.send_text(uid, f'用法: /llm <0-{len(agent.list_llms())-1}>', context_token=ctx)
+                bot.send_text(uid, f'用法: /llm <0-{len(agent.list_llms())-1}>', context_token=ctx, room_id=room_id)
         else:
             lines = [f"{'→' if cur else '  '} [{i}] {name}" for i, name, cur in agent.list_llms()]
-            bot.send_text(uid, 'LLMs:\n' + '\n'.join(lines), context_token=ctx)
+            bot.send_text(uid, 'LLMs:\n' + '\n'.join(lines), context_token=ctx, room_id=room_id)
         return
 
     def _handle():
         prompt = f"If you need to show files to user, use [FILE:filepath] in your response.\n\n{text}"
         dq = agent.put_task(prompt, source="wechat")
-        try: bot.send_typing(uid)
+        try: bot.send_typing(uid, room_id=room_id)
         except: pass
         # Wait for completion
         result = ''
@@ -306,7 +345,7 @@ def on_message(bot, msg):
             keep = chunks[:3] + [f'...（省略{len(chunks) - 5}条）...'] + chunks[-2:]
             chunks = keep
         for chunk in chunks:
-            try: bot.send_text(uid, chunk, context_token=ctx)
+            try: bot.send_text(uid, chunk, context_token=ctx, room_id=room_id)
             except Exception as e: print(f'[WX] send err: {e}', file=sys.__stdout__)
             time.sleep(0.3)
         for fpath in set(files):
@@ -316,7 +355,7 @@ def on_message(bot, msg):
                 ext = os.path.splitext(fpath)[1].lower()
                 sender = bot.send_video if ext in {'.mp4', '.mov', '.m4v', '.webm'} else \
                          bot.send_image if ext in {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'} else bot.send_file
-                sender(uid, fpath, context_token=ctx)
+                sender(uid, fpath, context_token=ctx, room_id=room_id)
                 print(f'[WX] sent media: {fpath}', file=sys.__stdout__)
             except Exception as e: print(f'[WX] send media err: {e}', file=sys.__stdout__)
 

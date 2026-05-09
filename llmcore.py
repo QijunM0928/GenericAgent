@@ -3,6 +3,11 @@ from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _RESP_CACHE_KEY = str(uuid.uuid4())
 
+def _is_error_text(text):
+    if not isinstance(text, str): return False
+    s = text.lstrip()
+    return s.startswith(('Error:', '!!!Error:', '[Error:', '[!!!Error:'))
+
 def _load_mykeys():
     try:
         import mykey; return {k: v for k, v in vars(mykey).items() if not k.startswith('_')}
@@ -362,7 +367,10 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
                     yield err; return [{"type": "text", "text": err}]
                 gen = _parse_openai_sse(r.iter_lines(), api_mode) if stream else _parse_openai_json(r.json(), api_mode)
                 try:
-                    while True: streamed = True; yield next(gen)
+                    while True:
+                        chunk = next(gen)
+                        streamed = True
+                        yield chunk
                 except StopIteration as e:
                     return e.value or []
         except (requests.Timeout, requests.ConnectionError) as e:
@@ -370,7 +378,7 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
                 d = _delay(None, attempt)
                 print(f"[LLM Retry] {type(e).__name__}, retry in {d:.1f}s ({attempt+1}/{max_retries+1})")
                 time.sleep(d); continue
-            err = f"!!!Error: {type(e).__name__}"
+            err = f"!!!Error: {type(e).__name__}: {e}"
             yield err; return [{"type": "text", "text": err}]
         except Exception as e:
             err = f"!!!Error: {type(e).__name__}: {e}"
@@ -522,7 +530,7 @@ class BaseSession:
                 if block.get('type', '') == 'tool_use':
                     tu = {'name': block.get('name', ''), 'arguments': block.get('input', {})}
                     yield f'<tool_use>{json.dumps(tu, ensure_ascii=False)}</tool_use>'
-            if not content.startswith("Error:"): self.history.append({"role": "assistant", "content": [{"type": "text", "text": content}]})
+            if not _is_error_text(content): self.history.append({"role": "assistant", "content": [{"type": "text", "text": content}]})
         return _ask_gen() if stream else ''.join(list(_ask_gen()))
 
 class ClaudeSession(BaseSession):
@@ -635,7 +643,7 @@ class NativeClaudeSession(BaseSession):
         try:
             while True: yield next(gen)
         except StopIteration as e: content_blocks = e.value or []
-        if content_blocks and not (len(content_blocks) == 1 and content_blocks[0].get("text", "").startswith("Error:")):
+        if content_blocks and not (len(content_blocks) == 1 and _is_error_text(content_blocks[0].get("text", ""))):
             self.history.append({"role": "assistant", "content": content_blocks})
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
         content = "\n".join(text_parts).strip()
@@ -891,7 +899,7 @@ class MixinSession:
         return self._cur_idx
     def _raw_ask(self, *args, **kwargs):
         base, n = self._pick(), len(self._sessions)
-        test_error = lambda x: isinstance(x, str) and (x.startswith('Error:') or x.startswith('[Error:'))
+        test_error = _is_error_text
         for attempt in range(self._retries + 1):
             idx = (base + attempt) % n
             gen = self._orig_raw_asks[idx](*args, **kwargs)
@@ -969,4 +977,3 @@ class NativeToolClient:
         if resp: _write_llm_log('Response', resp.raw)
         if resp and hasattr(resp, 'tool_calls') and resp.tool_calls: self._pending_tool_ids = [tc.id for tc in resp.tool_calls]
         return resp
-

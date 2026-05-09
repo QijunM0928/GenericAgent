@@ -1,0 +1,118 @@
+{
+  "name": "Leo Smooth Connected",
+  "version": "1.0",
+  "size": {
+    "width": 120,
+    "height": 140
+  },
+  "animations": {
+    "idle": {
+      "file": "idle.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 24,
+        "columns": 24,
+        "fps": 18,
+        "startFrame": 0
+      }
+    },
+    "walk": {
+      "file": "walk.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 20,
+        "columns": 20,
+        "fps": 20,
+        "startFrame": 0
+      }
+    },
+    "fly": {
+      "file": "fly.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 28,
+        "columns": 28,
+        "fps": 22,
+        "startFrame": 0
+      }
+    },
+    "happy": {
+      "file": "happy.png",
+      "loop": false,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 20,
+        "columns": 20,
+        "fps": 20,
+        "startFrame": 0
+      }
+    },
+    "angry": {
+      "file": "angry.png",
+      "loop": false,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 18,
+        "columns": 18,
+        "fps": 18,
+        "startFrame": 0
+      }
+    },
+    "sad": {
+      "file": "sad.png",
+      "loop": false,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 18,
+        "columns": 18,
+        "fps": 18,
+        "startFrame": 0
+      }
+    },
+    "surprise": {
+      "file": "surprise.png",
+      "loop": false,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 18,
+        "columns": 18,
+        "fps": 18,
+        "startFrame": 0
+      }
+    },
+    "bow": {
+      "file": "bow.png",
+      "loop": false,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 18,
+        "columns": 18,
+        "fps": 18,
+        "startFrame": 0
+      }
+    },
+    "jump": {
+      "file": "jump.png",
+      "loop": false,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 28,
+        "columns": 28,
+        "fps": 22,
+        "startFrame": 0
+      }
+    }
+  }
+}

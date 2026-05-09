@@ -1,4 +1,4 @@
-import os, sys, subprocess
+import os, sys, subprocess, signal
 from urllib.request import urlopen
 from urllib.parse import quote
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
@@ -53,26 +53,71 @@ def render_sidebar():
             agent.llmclient.backend.history.extend(tool_hist)
             st.toast(f"已重新注入工具，追加了 {len(tool_hist)} 条示范记录")
         except Exception as e: st.toast(f"注入工具示范失败: {e}")
-    if st.button("🐱 桌面宠物"):
-        kwargs = {'creationflags': 0x08} if sys.platform == 'win32' else {}
-        pet_script = os.path.join(script_dir, 'desktop_pet_v2.pyw')
-        if not os.path.exists(pet_script): pet_script = os.path.join(script_dir, 'desktop_pet.pyw')
-        subprocess.Popen([sys.executable, pet_script], **kwargs)
-        def _pet_req(q):
-            def _do():
-                try: urlopen(f'http://127.0.0.1:41983/?{q}', timeout=2)
+    def _is_pet_alive(pid):
+        """检查宠物进程是否仍在运行"""
+        if pid is None: return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, PermissionError, OSError):
+            return False
+
+    def _is_port_in_use(port):
+        """检查端口是否被占用，返回占用该端口的PID或None"""
+        try:
+            import subprocess as _sp
+            result = _sp.run(['lsof', '-i', f':{port}', '-t', '-sTCP:LISTEN'],
+                             capture_output=True, text=True, timeout=3)
+            pids = result.stdout.strip().split('\n')
+            pids = [int(p) for p in pids if p.strip().isdigit()]
+            return pids[0] if pids else None
+        except Exception:
+            return None
+
+    _port_pid = _is_port_in_use(51983)
+    pet_running = (st.session_state.get('pet_pid') is not None and _is_pet_alive(st.session_state.get('pet_pid'))) or _port_pid is not None
+    # 如果端口被占用但session中没有记录（僵尸进程），同步PID到session
+    if _port_pid is not None and (st.session_state.get('pet_pid') is None or not _is_pet_alive(st.session_state.get('pet_pid'))):
+        st.session_state.pet_pid = _port_pid
+    if pet_running:
+        if st.button("🐱 关闭桌面宠物", key="pet_toggle"):
+            _pet_pid = st.session_state.get('pet_pid')
+            try:
+                os.kill(_pet_pid, signal.SIGTERM)
+            except Exception:
+                pass
+            st.session_state.pet_pid = None
+            if hasattr(agent, '_pet_req'):
+                try: agent._pet_req('quit=1')
                 except Exception: pass
-            threading.Thread(target=_do, daemon=True).start()
-        agent._pet_req = _pet_req
-        if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
-        def _pet_hook(ctx):
-            parts = [f"Turn {ctx.get('turn','?')}"]
-            if ctx.get('summary'): parts.append(ctx['summary'])
-            if ctx.get('exit_reason'): parts.append('任务已完成')
-            _pet_req(f'msg={quote(chr(10).join(parts))}')
-            if ctx.get('exit_reason'): _pet_req('state=idle')
-        agent._turn_end_hooks['pet'] = _pet_hook
-        st.toast("桌面宠物已启动")
+            if hasattr(agent, '_turn_end_hooks') and 'pet' in agent._turn_end_hooks:
+                del agent._turn_end_hooks['pet']
+            if hasattr(agent, '_pet_req'):
+                del agent._pet_req
+            st.toast("桌面宠物已关闭")
+            st.rerun()
+    else:
+        if st.button("🐱 桌面宠物", key="pet_toggle"):
+            kwargs = {'creationflags': 0x08} if sys.platform == 'win32' else {}
+            pet_script = os.path.join(script_dir, 'desktop_pet_v3.pyw')
+            proc = subprocess.Popen(['/opt/miniforge3/bin/python3', pet_script], **kwargs)
+            st.session_state.pet_pid = proc.pid
+            def _pet_req(q):
+                def _do():
+                    try: urlopen(f'http://127.0.0.1:51983/?{q}', timeout=2)
+                    except Exception: pass
+                threading.Thread(target=_do, daemon=True).start()
+            agent._pet_req = _pet_req
+            if not hasattr(agent, '_turn_end_hooks'): agent._turn_end_hooks = {}
+            def _pet_hook(ctx):
+                parts = [f"Turn {ctx.get('turn','?')}"]
+                if ctx.get('summary'): parts.append(ctx['summary'])
+                if ctx.get('exit_reason'): parts.append('任务已完成')
+                _pet_req(f'msg={quote(chr(10).join(parts))}')
+                if ctx.get('exit_reason'): _pet_req('state=idle')
+            agent._turn_end_hooks['pet'] = _pet_hook
+            st.toast("桌面宠物已启动")
+            st.rerun()
     
     st.divider()
     if st.button("开始空闲自主行动"):

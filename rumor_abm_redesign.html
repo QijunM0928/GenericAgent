@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能体仿真实验室 · 谣言传播与治理</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* 深色模式变量 (默认) */
+    --primary: #6366f1;
+    --primary-hover: #4f46e5;
+    --bg-gradient: radial-gradient(circle at top left, #1e293b 0%, #0f172a 100%);
+    --glass: rgba(255, 255, 255, 0.03);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --text-main: #f8fafc;
+    --text-sub: #94a3b8;
+    --input-bg: rgba(0, 0, 0, 0.2);
+    --panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    --viz-overlay-bg: rgba(0, 0, 0, 0.4);
+    
+    /* 状态色 */
+    --s-unknown: #64748b;
+    --s-believer: #ef4444;
+    --s-doubter: #f59e0b;
+    --s-debunker: #10b981;
+    --link-color: rgba(255, 255, 255, 0.1);
+  }
+
+  /* 浅色模式变量 */
+  [data-theme="light"] {
+    --bg-gradient: radial-gradient(circle at top left, #f1f5f9 0%, #e2e8f0 100%);
+    --glass: rgba(255, 255, 255, 0.8);
+    --glass-border: rgba(0, 0, 0, 0.05);
+    --text-main: #0f172a;
+    --text-sub: #64748b;
+    --input-bg: #ffffff;
+    --panel-shadow: 0 10px 40px rgba(0, 0, 0, 0.05);
+    --viz-overlay-bg: rgba(255, 255, 255, 0.6);
+    --link-color: rgba(0, 0, 0, 0.08);
+    --s-unknown: #94a3b8;
+  }
+
+  * { box-sizing: border-box; outline: none; transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease; }
+  body {
+    margin: 0; padding: 0;
+    background: var(--bg-gradient);
+    background-attachment: fixed;
+    color: var(--text-main);
+    font-family: 'Inter', -apple-system, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .app-container {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* ---------- Header ---------- */
+  header.top-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 24px;
+    background: var(--glass);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+    border-radius: 20px;
+    box-shadow: var(--panel-shadow);
+  }
+
+  header.top-nav h1 {
+    margin: 0; font-size: 20px; font-weight: 700;
+    background: linear-gradient(to right, var(--text-main), var(--primary));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .nav-right { display: flex; gap: 12px; align-items: center; }
+  .tag {
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--primary);
+    padding: 4px 12px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  /* Theme Toggle */
+  #theme-toggle {
+    background: var(--input-bg);
+    border: 1px solid var(--glass-border);
+    width: 40px; height: 40px; border-radius: 12px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    font-size: 18px; color: var(--text-main);
+  }
+  #theme-toggle:hover { transform: scale(1.05); }
+
+  /* Mode Toggle */
+  .mode-toggle {
+    display: flex; background: var(--input-bg);
+    padding: 4px; border-radius: 12px; border: 1px solid var(--glass-border);
+  }
+  .mode-toggle button {
+    background: transparent; color: var(--text-sub); border: none;
+    padding: 6px 16px; border-radius: 9px; cursor: pointer;
+    font-size: 13px; font-weight: 600;
+  }
+  .mode-toggle button.active {
+    background: var(--primary); color: white;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+  }
+
+  /* ---------- Dashboard Grid ---------- */
+  .dashboard-grid {
+    display: grid;
+    grid-template-columns: 310px 1fr 340px;
+    gap: 20px;
+  }
+
+  .panel {
+    background: var(--glass);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    border-radius: 20px;
+    padding: 24px;
+    box-shadow: var(--panel-shadow);
+  }
+
+  .panel h3 {
+    margin: 0 0 18px; font-size: 14px; color: var(--text-main);
+    display: flex; align-items: center; gap: 10px;
+    text-transform: uppercase; letter-spacing: 1px; font-weight: 700;
+  }
+  .panel h3::before {
+    content: ''; width: 4px; height: 14px; background: var(--primary); border-radius: 4px;
+  }
+
+  /* ---------- Controls ---------- */
+  .control-item { margin-bottom: 18px; }
+  .control-label {
+    display: flex; justify-content: space-between;
+    font-size: 12px; color: var(--text-sub); margin-bottom: 10px; font-weight: 500;
+  }
+  .control-label b { color: var(--primary); font-family: 'JetBrains Mono'; }
+  
+  input[type=range] {
+    width: 100%; height: 6px; border-radius: 3px;
+    appearance: none; background: var(--link-color);
+  }
+  input[type=range]::-webkit-slider-thumb {
+    appearance: none; width: 18px; height: 18px;
+    background: var(--primary); border-radius: 50%; cursor: pointer;
+    box-shadow: 0 0 15px rgba(99, 102, 241, 0.4);
+    border: 2px solid white;
+  }
+
+  select, input[type=text], input[type=password] {
+    width: 100%; padding: 12px; background: var(--input-bg);
+    border: 1px solid var(--glass-border); border-radius: 10px;
+    color: var(--text-main); font-size: 13px;
+  }
+
+  .btn-group { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+  .btn {
+    padding: 14px; border-radius: 12px; border: none; cursor: pointer;
+    font-size: 13px; font-weight: 700; transition: all 0.2s;
+  }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-primary:hover { background: var(--primary-hover); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(99, 102, 241, 0.3); }
+  .btn-secondary { background: var(--input-bg); color: var(--text-main); border: 1px solid var(--glass-border); }
+  .btn-secondary:hover { background: rgba(255,255,255,0.1); }
+  .btn-full { grid-column: 1 / -1; }
+
+  /* ---------- Viz ---------- */
+  .viz-container { position: relative; height: 550px; border-radius: 16px; overflow: hidden; background: rgba(0,0,0,0.02); }
+  #graph { width: 100%; height: 100%; }
+  
+  .viz-overlay {
+    position: absolute; top: 16px; left: 16px;
+    padding: 10px 20px; background: var(--viz-overlay-bg);
+    backdrop-filter: blur(4px); border: 1px solid var(--glass-border);
+    border-radius: 12px; font-family: 'JetBrains Mono'; font-weight: 700; color: var(--text-main);
+  }
+
+  .legend {
+    position: absolute; bottom: 16px; right: 16px;
+    background: var(--viz-overlay-bg); backdrop-filter: blur(4px);
+    padding: 14px; border-radius: 16px; border: 1px solid var(--glass-border);
+    font-size: 11px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 10px; color: var(--text-main); font-weight: 600; }
+  .legend-item i { width: 12px; height: 12px; border-radius: 50%; }
+
+  /* ---------- Metrics ---------- */
+  .metrics-list { display: flex; flex-direction: column; gap: 14px; }
+  .metric-card {
+    background: var(--input-bg); padding: 16px; border-radius: 16px;
+    border: 1px solid var(--glass-border);
+  }
+  .metric-header { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-sub); margin-bottom: 10px; font-weight: 600; }
+  .metric-value { font-size: 20px; font-weight: 700; font-family: 'JetBrains Mono'; color: var(--text-main); }
+  
+  .progress-bar {
+    height: 6px; background: var(--link-color); border-radius: 3px; overflow: hidden;
+  }
+  .progress-fill { height: 100%; transition: width 0.8s cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+  /* ---------- Logs ---------- */
+  .bottom-grid { display: grid; grid-template-columns: 1fr 420px; gap: 20px; }
+  .log-container { height: 300px; overflow-y: auto; padding-right: 10px; }
+  
+  .log-entry {
+    margin-bottom: 12px; padding: 16px; border-radius: 16px;
+    background: var(--input-bg); border: 1px solid var(--glass-border);
+    border-left: 5px solid var(--primary);
+  }
+  .log-header { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 6px; }
+  .log-id { font-weight: 700; color: var(--text-main); }
+  .log-tag { padding: 3px 8px; border-radius: 6px; color: white; font-size: 10px; font-weight: 700; }
+  .log-reason { font-size: 12px; color: var(--text-sub); line-height: 1.6; }
+
+  footer { text-align: center; color: var(--text-sub); font-size: 12px; margin: 40px 0; }
+</style>
+</head>
+<body data-theme="dark">
+
+<div class="app-container">
+  <header class="top-nav">
+    <div class="nav-right">
+      <h1>智能体仿真实验室</h1>
+      <span class="tag">Dual Theme v2.1</span>
+    </div>
+    <div class="nav-right">
+      <div class="mode-toggle">
+        <button id="btn-mode-mock" class="active">Mock</button>
+        <button id="btn-mode-llm">LLM</button>
+      </div>
+      <button id="theme-toggle" title="切换深/浅色模式">🌗</button>
+    </div>
+  </header>
+
+  <div class="dashboard-grid">
+    <aside class="panel">
+      <h3>核心仿真参数</h3>
+      <div class="control-item">
+        <div class="control-label">智能体规模 <b id="v-n">40</b></div>
+        <input type="range" id="ctl-n" min="15" max="120" value="40">
+      </div>
+      <div class="control-item">
+        <div class="control-label">辟谣者占比 <b id="v-dr">10%</b></div>
+        <input type="range" id="ctl-dr" min="0" max="40" value="10">
+      </div>
+      <div class="control-item">
+        <div class="control-label">初始源 <b id="v-src">2</b></div>
+        <input type="range" id="ctl-src" min="1" max="10" value="2">
+      </div>
+      <div class="control-item">
+        <label class="control-label">社交网络拓扑</label>
+        <select id="ctl-net">
+          <option value="scalefree">BA 无标度网络</option>
+          <option value="random">ER 随机网络</option>
+        </select>
+      </div>
+
+      <div class="btn-group">
+        <button id="btn-start" class="btn btn-primary btn-full">启动仿真</button>
+        <button id="btn-step" class="btn btn-secondary btn-full">单步迭代</button>
+        <button id="btn-reset" class="btn btn-secondary btn-full">重置环境</button>
+      </div>
+      
+      <h3 style="margin-top:24px">LLM 引擎</h3>
+      <input type="password" id="ctl-key" placeholder="在此输入 API Key">
+    </aside>
+
+    <main class="panel" style="padding: 0; overflow: hidden;">
+      <div class="viz-container">
+        <div class="viz-overlay">ROUND <span id="v-round">0</span> / <span id="v-roundmax">15</span></div>
+        <div class="legend">
+          <div class="legend-item"><i style="background:var(--s-unknown)"></i>未知沉默</div>
+          <div class="legend-item"><i style="background:var(--s-believer)"></i>相信扩散</div>
+          <div class="legend-item"><i style="background:var(--s-doubter)"></i>理性怀疑</div>
+          <div class="legend-item"><i style="background:var(--s-debunker)"></i>辟谣纠偏</div>
+        </div>
+        <svg id="graph"></svg>
+      </div>
+    </main>
+
+    <aside class="panel">
+      <h3>实时传播统计</h3>
+      <div class="metrics-list" id="stats"></div>
+
+      <h3 style="margin-top:24px">核心指标看板</h3>
+      <div class="metrics-list">
+        <div class="metric-card">
+          <div class="metric-header">谣言峰值覆盖率</div>
+          <div class="metric-value" id="m-peak">0.0%</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-header">治理收敛率</div>
+          <div class="metric-value" id="m-converge">就绪</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-header">LLM 调用次数</div>
+          <div class="metric-value" id="m-calls">0</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-header">当前运行模式</div>
+          <div class="metric-value" id="m-mode" style="color:var(--primary)">Mock</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="bottom-grid">
+    <div class="panel">
+      <h3>演化动力学曲线</h3>
+      <div style="height: 300px;"><canvas id="chart-line"></canvas></div>
+    </div>
+    <div class="panel">
+      <h3>智能体决策日志流</h3>
+      <div class="log-container" id="log-box"></div>
+    </div>
+  </div>
+
+  <footer>
+    Multi-Agent Simulation Lab · Inspired by LLM Reasoning & Social Dynamics
+  </footer>
+</div>
+
+<div id="toast" style="position:fixed; bottom:30px; left:50%; transform:translateX(-50%); background:var(--primary); color:white; padding:12px 28px; border-radius:15px; font-size:14px; opacity:0; transition:0.4s; z-index:1000; font-weight:700;"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<script>
+/* ---------- 逻辑与 UI 同步优化 ---------- */
+const STATES = {
+  UNKNOWN:  {key:'UNKNOWN',  zh:'未知',   color:''},
+  BELIEVER: {key:'BELIEVER', zh:'相信',   color:'#ef4444'},
+  DOUBTER:  {key:'DOUBTER',  zh:'怀疑',   color:'#f59e0b'},
+  DEBUNKER: {key:'DEBUNKER', zh:'辟谣',   color:'#10b981'},
+};
+
+const PERSONAS = [
+  {key:'gullible',  zh:'直觉', weight:{believe:+0.25, debunk:-0.10}},
+  {key:'skeptic',   zh:'逻辑', weight:{believe:-0.20, debunk:+0.15}},
+  {key:'herdlike',  zh:'社交', weight:{believe:+0.10, debunk:+0.05}},
+  {key:'independent',zh:'独立',weight:{believe:-0.05, debunk:+0.05}},
+];
+
+const state = {
+  mode:'mock', running:false, timer:null, round:0, llmCalls:0,
+  world:null, history:[], chart:null, logs:[],
+};
+
+/* --- 主题切换逻辑 --- */
+const themeToggle = document.getElementById('theme-toggle');
+themeToggle.onclick = () => {
+    const current = document.body.getAttribute('data-theme');
+    const target = current === 'light' ? 'dark' : 'light';
+    document.body.setAttribute('data-theme', target);
+    localStorage.setItem('lab_theme', target);
+    themeToggle.textContent = target === 'light' ? '🌙' : '☀️';
+    if(state.chart) {
+        state.chart.options.scales.y.grid.color = target === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)';
+        state.chart.update();
+    }
+};
+
+// 模式切换
+document.getElementById('btn-mode-mock').onclick = function(){
+    state.mode = 'mock'; this.classList.add('active'); 
+    document.getElementById('btn-mode-llm').classList.remove('active');
+    document.getElementById('m-mode').textContent = 'Mock';
+};
+document.getElementById('btn-mode-llm').onclick = function(){
+    const key = document.getElementById('ctl-key').value;
+    if(!key) { showToast('请输入 API Key'); return; }
+    state.mode = 'llm'; this.classList.add('active');
+    document.getElementById('btn-mode-mock').classList.remove('active');
+    document.getElementById('m-mode').textContent = 'LLM';
+};// 初始化主题
+const savedTheme = localStorage.getItem('lab_theme') || 'dark';
+document.body.setAttribute('data-theme', savedTheme);
+themeToggle.textContent = savedTheme === 'light' ? '🌙' : '☀️';
+
+/* --- 仿真核心逻辑 --- */
+function initWorld(){
+  const N = +document.getElementById('ctl-n').value;
+  const drRatio = +document.getElementById('ctl-dr').value / 100;
+  const srcCount = +document.getElementById('ctl-src').value;
+  const netType = document.getElementById('ctl-net').value;
+
+  const agents = Array.from({length:N}, (_,i)=>({
+    id:i, state:'UNKNOWN', persona: PERSONAS[Math.floor(Math.random()*PERSONAS.length)], x:0, y:0
+  }));
+
+  let edges = [];
+  if(netType === 'random'){
+    const p = 0.08;
+    for(let i=0;i<N;i++) for(let j=i+1;j<N;j++) if(Math.random()<p) edges.push({source:i,target:j});
+  } else {
+    for(let i=0;i<3;i++) for(let j=i+1;j<3;j++) edges.push({source:i,target:j});
+    const degree = new Array(N).fill(0);
+    edges.forEach(e=>{ degree[e.source]++; degree[e.target]++; });
+    for(let i=3;i<N;i++){
+      const totalDeg = degree.slice(0,i).reduce((a,b)=>a+b,0);
+      const picked = new Set();
+      while(picked.size<2){
+        let r = Math.random()*totalDeg, acc=0, chosen=0;
+        for(let j=0;j<i;j++){ acc+=degree[j]; if(acc>=r){chosen=j;break;} }
+        picked.add(chosen);
+      }
+      picked.forEach(j=>{ edges.push({source:i,target:j}); degree[i]++; degree[j]++; });
+    }
+  }
+
+  const adj = Array.from({length:N},()=>[]);
+  edges.forEach(e=>{ adj[e.source].push(e.target); adj[e.target].push(e.source); });
+
+  const degArr = adj.map((list,i)=>({i,d:list.length})).sort((a,b)=>b.d-a.d);
+  for(let k=0;k<srcCount && k<N;k++) agents[degArr[k].i].state = 'BELIEVER';
+  
+  const drN = Math.round(N*drRatio);
+  let available = agents.filter(a=>a.state==='UNKNOWN');
+  for(let k=0;k<drN && available.length;k++){
+    const idx = Math.floor(Math.random()*available.length);
+    available[idx].state = 'DEBUNKER';
+    available.splice(idx,1);
+  }
+
+  state.world = {agents, edges, adj};
+  state.round = 0; state.history = []; state.logs = [];
+  document.getElementById('v-roundmax').textContent = '20';
+  recordHistory();
+  renderGraph(true);
+  renderStats();
+  renderChart();
+  renderLogs();
+}
+
+async function stepOnce(){
+  if(!state.world) return;
+  const maxR = +document.getElementById('ctl-n').value; // 这里应根据需要调整，暂设为 N 相关或固定值
+  state.round++;
+  document.getElementById('v-round').textContent = state.round;
+
+  const {agents, adj} = state.world;
+  const neighborInfo = agents.map((a,i)=>{
+    const nbs = adj[i].map(j=>agents[j]);
+    return {
+      believers: nbs.filter(n=>n.state==='BELIEVER').length,
+      doubters:  nbs.filter(n=>n.state==='DOUBTER').length,
+      debunkers: nbs.filter(n=>n.state==='DEBUNKER').length,
+      total:     nbs.length,
+    };
+  });
+
+  const decisions = [];
+  if(state.mode === 'mock'){
+    agents.forEach((a,i)=> decisions.push({agent:a, ...mockDecide(a, neighborInfo[i])}));
+  } else {
+    const BATCH = 6;
+    for(let b=0; b<agents.length; b+=BATCH){
+      const batch = agents.slice(b, b+BATCH);
+      const results = await Promise.all(batch.map((a,k)=>llmDecide(a, neighborInfo[b+k])));
+      results.forEach((d,k)=> decisions.push({agent:batch[k], ...d}));
+    }
+  }
+
+  decisions.forEach(({agent, newState, reason})=>{
+    if(agent.state !== newState){
+      state.logs.unshift({round:state.round, id:agent.id, from:agent.state, to:newState, persona:agent.persona.zh, reason});
+      agent.state = newState;
+      agent.changed = true;
+    } else {
+      agent.changed = false;
+    }
+  });
+
+  recordHistory();
+  renderGraph();
+  renderStats();
+  renderChart();
+  renderLogs();
+}
+
+function mockDecide(agent, info){
+  const cur = agent.state;
+  const p = agent.persona.weight;
+  const r = Math.random();
+  if(info.total === 0) return {newState:cur, reason:'无社交连接。'};
+  
+  if(cur === 'UNKNOWN'){
+    const pBelieve = Math.min(0.7, 0.25*info.believers/Math.max(info.total,1)*3 + p.believe);
+    const pDebunk  = Math.min(0.5, 0.2 *info.debunkers/Math.max(info.total,1)*3 + p.debunk);
+    if(r < pBelieve) return {newState:'BELIEVER', reason:'相信了周围的传言。'};
+    if(r < pBelieve + pDebunk) return {newState:'DOUBTER', reason:'持怀疑态度。'};
+    return {newState:cur, reason:'静观其变。'};
+  }
+  if(cur === 'BELIEVER'){
+    if(info.debunkers/info.total > 0.3 && r < 0.4 + p.debunk) return {newState:'DOUBTER', reason:'看到辟谣信息，发生动摇。'};
+  }
+  if(cur === 'DOUBTER'){
+    if(info.debunkers >= 2 && r < 0.5) return {newState:'DEBUNKER', reason:'决定参与辟谣。'};
+  }
+  return {newState:cur, reason:'维持现状。'};
+}
+
+async function llmDecide(agent, info){
+  const key = document.getElementById('ctl-key').value.trim();
+  if(!key) return mockDecide(agent, info);
+
+  try {
+    const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+key},
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages:[
+          {role:'system', content:'你是一个社交网络智能体。根据处境返回JSON: {"action":"A|B|C|D","reason":"理由"}。A:相信, B:怀疑, C:辟谣, D:沉默。'},
+          {role:'user', content:`ID:${agent.id},性格:${agent.persona.zh},状态:${agent.state},邻居:相信${info.believers},怀疑${info.doubters},辟谣${info.debunkers}`}
+        ],
+        response_format:{type:'json_object'}
+      })
+    });
+    const data = await resp.json();
+    state.llmCalls++;
+    document.getElementById('m-calls').textContent = state.llmCalls;
+    const res = JSON.parse(data.choices[0].message.content);
+    const map = {A:'BELIEVER', B:'DOUBTER', C:'DEBUNKER', D:agent.state};
+    return {newState: map[res.action] || agent.state, reason: res.reason};
+  } catch(e) {
+    return mockDecide(agent, info);
+  }
+}
+
+/* --- 渲染逻辑 --- */
+let svg, simulation;
+function renderGraph(init=false){
+  const w = document.getElementById('graph').clientWidth || 800;
+  const h = 550;
+  if(init){
+    if(simulation) simulation.stop();
+    d3.select('#graph').selectAll('*').remove();
+    svg = d3.select('#graph').attr('viewBox',`0 0 ${w} ${h}`);
+    const links = svg.append('g').attr('stroke','var(--link-color)').attr('stroke-width',1);
+    const nodes = svg.append('g');
+
+    simulation = d3.forceSimulation(state.world.agents)
+      .force('link', d3.forceLink(state.world.edges).id(d=>d.id).distance(60))
+      .force('charge', d3.forceManyBody().strength(-120))
+      .force('center', d3.forceCenter(w/2, h/2))
+      .force('collide', d3.forceCollide(16));
+
+    links.selectAll('line').data(state.world.edges).join('line');
+    nodes.selectAll('circle').data(state.world.agents).join('circle')
+      .attr('r', 7)
+      .attr('fill', d=>d.state==='UNKNOWN'?'var(--s-unknown)':STATES[d.state].color);
+
+    simulation.on('tick', ()=>{
+      links.selectAll('line').attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+      nodes.selectAll('circle').attr('cx',d=>d.x).attr('cy',d=>d.y);
+    });
+  }
+
+  svg.selectAll('circle')
+    .transition().duration(600)
+    .attr('fill', d=>d.state==='UNKNOWN'?'var(--s-unknown)':STATES[d.state].color)
+    .attr('r', d=>d.changed ? 14 : (d.state==='BELIEVER'?10:7))
+    .on('end', function(d) {
+        if(d.changed) d3.select(this).transition().duration(200).attr('r', d.state==='BELIEVER'?10:7);
+    });
+}
+
+function renderStats(){
+  const N = state.world.agents.length;
+  const count = {UNKNOWN:0,BELIEVER:0,DOUBTER:0,DEBUNKER:0};
+  state.world.agents.forEach(a=>count[a.state]++);
+  const box = document.getElementById('stats');
+  box.innerHTML = '';
+  ['BELIEVER','DOUBTER','DEBUNKER','UNKNOWN'].forEach(k=>{
+    const pct = (count[k]/N*100).toFixed(1);
+    const card = `
+      <div class="metric-card">
+        <div class="metric-header"><span>${STATES[k].zh}</span> <span>${count[k]} (${pct}%)</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%; background:${k==='UNKNOWN'?'var(--s-unknown)':STATES[k].color}"></div></div>
+      </div>`;
+    box.insertAdjacentHTML('beforeend', card);
+  });
+
+  // 补全核心指标计算
+  const peakB = Math.max(0, ...state.history.map(h=>h.BELIEVER));
+  document.getElementById('m-peak').textContent = (peakB/N*100).toFixed(1) + '%';
+  
+  const converged = count.BELIEVER/N < 0.1 ? '✓ 已收敛' :
+                    count.BELIEVER/N < 0.3 ? '趋于稳定' : '扩散中';
+  document.getElementById('m-converge').textContent = converged;
+}
+
+function renderChart(){
+  const ctx = document.getElementById('chart-line');
+  const labels = state.history.map(h=>'R'+h.round);
+  const datasets = Object.keys(STATES).map(k => ({
+    label: STATES[k].zh,
+    data: state.history.map(h=>h[k]),
+    borderColor: k==='UNKNOWN'?'#94a3b8':STATES[k].color,
+    backgroundColor: (k==='UNKNOWN'?'#94a3b8':STATES[k].color) + '22',
+    borderWidth: 3, tension: 0.4, fill: true, pointRadius: 0
+  }));
+
+  if(!state.chart){
+    state.chart = new Chart(ctx, {
+      type:'line',
+      data:{labels, datasets},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{display:false}},
+        scales:{
+          y:{beginAtZero:true, grid:{color:document.body.getAttribute('data-theme')==='light'?'rgba(0,0,0,0.05)':'rgba(255,255,255,0.05)'}, ticks:{color:'var(--text-sub)'}},
+          x:{grid:{display:false}, ticks:{color:'var(--text-sub)'}}
+        }
+      }
+    });
+  } else {
+    state.chart.data.labels = labels;
+    // 修复：同步更新每个数据集的数据内容
+    state.chart.data.datasets.forEach((ds, i) => {
+        ds.data = datasets[i].data;
+    });
+    state.chart.update('none'); // 使用 'none' 模式更新以提升实时仿真的流畅度
+  }
+}
+
+function renderLogs(){
+  const box = document.getElementById('log-box');
+  box.innerHTML = state.logs.slice(0, 15).map(log => `
+    <div class="log-entry" style="border-color:${STATES[log.to].color}">
+      <div class="log-header">
+        <span class="log-id">Agent #${log.id} (${log.persona})</span>
+        <span class="log-tag" style="background:${STATES[log.to].color}">R${log.round}</span>
+      </div>
+      <div class="log-reason">"${log.reason}"</div>
+    </div>
+  `).join('');
+}
+
+function recordHistory(){
+  const count = {round:state.round, UNKNOWN:0,BELIEVER:0,DOUBTER:0,DEBUNKER:0};
+  state.world.agents.forEach(a=>count[a.state]++);
+  state.history.push(count);
+}
+
+/* --- UI 控制 --- */
+function startLoop(){
+  if(state.running) return;
+  state.running = true;
+  document.getElementById('btn-start').textContent = '运行中...';
+  const loop = async ()=>{
+    if(!state.running) return;
+    await stepOnce();
+    if(state.round < 20) state.timer = setTimeout(loop, 1000);
+    else stopLoop();
+  };
+  loop();
+}
+function stopLoop(){
+  state.running = false; clearTimeout(state.timer);
+  document.getElementById('btn-start').textContent = '启动仿真';
+}
+
+document.getElementById('btn-start').onclick = startLoop;
+document.getElementById('btn-step').onclick = stepOnce;
+document.getElementById('btn-reset').onclick = initWorld;
+
+['ctl-n','ctl-dr','ctl-src'].forEach(id=>{
+  document.getElementById(id).oninput = (e) => {
+      const suffix = id==='ctl-dr'?'%':'';
+      document.getElementById('v-'+id.split('-')[1]).textContent = e.target.value + suffix;
+  };
+  document.getElementById(id).onchange = initWorld;
+});
+
+initWorld();
+</script>
+</body>
+</html>

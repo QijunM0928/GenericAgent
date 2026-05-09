@@ -17,6 +17,9 @@ def load_tool_schema(suffix=''):
     TOOLS_SCHEMA = json.loads(TS if os.name == 'nt' else TS.replace('powershell', 'bash'))
 load_tool_schema()
 
+def _norm_model_selector(value):
+    return str(value or '').strip().lower()
+
 lang_suffix = '_en' if os.environ.get('GA_LANG', '') == 'en' else ''
 mem_dir = os.path.join(script_dir, 'memory')
 if not os.path.exists(mem_dir): os.makedirs(mem_dir)
@@ -67,9 +70,14 @@ class GeneraticAgent:
         self.history = []
         self.task_queue = queue.Queue() 
         self.is_running = False; self.stop_sig = False
-        self.llm_no = 0;  self.inc_out = False
+        self.llm_no = 0;  self.inc_out = True
         self.handler = None; self.verbose = True
+        if not self.llmclients:
+            raise RuntimeError('[ERROR] No LLM config found. Please create mykey.py from mykey_template.py.')
         self.llmclient = self.llmclients[self.llm_no]
+        default_model = os.environ.get('GA_DEFAULT_MODEL') or mykeys.get('default_model') or mykeys.get('default_llm')
+        if default_model:
+            self.select_llm(default_model)
 
     def next_llm(self, n=-1):
         self.llm_no = ((self.llm_no + 1) if n < 0 else n) % len(self.llmclients)
@@ -87,6 +95,27 @@ class GeneraticAgent:
         if isinstance(b, dict): return 'BADCONFIG_MIXIN'
         if model: return b.backend.model.lower()
         return f"{type(b.backend).__name__}/{b.backend.name}"
+    def select_llm(self, selector):
+        s = _norm_model_selector(selector)
+        if not s:
+            raise ValueError('empty model selector')
+        if re.fullmatch(r'\d+', s):
+            self.next_llm(int(s))
+            return self.llm_no
+        matches = []
+        for i, client in enumerate(self.llmclients):
+            backend = getattr(client, 'backend', None)
+            haystack = ' '.join(str(x or '') for x in [
+                self.get_llm_name(client),
+                getattr(backend, 'name', ''),
+                getattr(backend, 'model', ''),
+            ]).lower()
+            if s in haystack:
+                matches.append(i)
+        if not matches:
+            raise ValueError(f'unknown model: {selector}')
+        self.next_llm(matches[0])
+        return self.llm_no
 
     def abort(self):
         if not self.is_running: return
@@ -175,10 +204,16 @@ if __name__ == '__main__':
     parser.add_argument('--task', metavar='IODIR', help='一次性任务模式(文件IO)')
     parser.add_argument('--reflect', metavar='SCRIPT', help='反射模式：加载监控脚本，check()触发时发任务')
     parser.add_argument('--input', help='prompt')
-    parser.add_argument('--llm_no', type=int, default=0)
+    parser.add_argument('--llm_no', type=int, default=None)
     parser.add_argument('--verbose', action='store_true')
+    parser.add_argument('--cli', action='store_true', help='启动 Claude Code 风格 TUI 终端')
     parser.add_argument('--bg', action='store_true', help='popen, print PID, exit')
     args = parser.parse_args()
+
+    if args.cli:
+        from frontends.cliapp import GenericAgentCLI
+        GenericAgentCLI(llm_no=args.llm_no, verbose=args.verbose).run()
+        sys.exit(0)
 
     if args.bg:
         import subprocess, platform
@@ -191,7 +226,8 @@ if __name__ == '__main__':
         print(p.pid); sys.exit(0)
 
     agent = GeneraticAgent()
-    agent.next_llm(args.llm_no)
+    if args.llm_no is not None:
+        agent.next_llm(args.llm_no)
     agent.verbose = args.verbose
     threading.Thread(target=agent.run, daemon=True).start()
 

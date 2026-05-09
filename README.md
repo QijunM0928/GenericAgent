@@ -114,6 +114,8 @@ Besides the default Streamlit web UI, you can also try other frontend styles:
 ```bash
 python frontends/qtapp.py                # Qt-based desktop app
 streamlit run frontends/stapp2.py        # Alternative Streamlit UI
+pip install rich prompt_toolkit
+python agentmain.py --cli                # Claude Code style terminal UI
 ```
 
 ### Common Chat Commands

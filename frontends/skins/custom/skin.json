@@ -1,0 +1,134 @@
+{
+  "name": "Custom",
+  "version": "1.0.0",
+  "author": "You",
+  "description": "自定义桌面宠物 - 骨骼动画版",
+  "style": "photo",
+  "format": "sprite",
+  "size": {
+    "width": 120,
+    "height": 140
+  },
+  "animations": {
+    "idle": {
+      "file": "idle.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 8,
+        "columns": 8,
+        "fps": 8,
+        "startFrame": 0
+      }
+    },
+    "walk": {
+      "file": "walk.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 8,
+        "columns": 8,
+        "fps": 12,
+        "startFrame": 0
+      }
+    },
+    "run": {
+      "file": "run.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 8,
+        "columns": 8,
+        "fps": 16,
+        "startFrame": 0
+      }
+    },
+    "sprint": {
+      "file": "sprint.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 8,
+        "columns": 8,
+        "fps": 20,
+        "startFrame": 0
+      }
+    },
+    "fly": {
+      "file": "fly.png",
+      "loop": true,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 6,
+        "columns": 6,
+        "fps": 12,
+        "startFrame": 0
+      }
+    },
+    "happy": {
+      "file": "happy.png",
+      "loop": false,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 8,
+        "columns": 8,
+        "fps": 8,
+        "startFrame": 0
+      }
+    },
+    "angry": {
+      "file": "angry.png",
+      "loop": false,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 6,
+        "columns": 6,
+        "fps": 8,
+        "startFrame": 0
+      }
+    },
+    "cry": {
+      "file": "cry.png",
+      "loop": false,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 6,
+        "columns": 6,
+        "fps": 8,
+        "startFrame": 0
+      }
+    },
+    "laugh": {
+      "file": "laugh.png",
+      "loop": false,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 8,
+        "columns": 8,
+        "fps": 10,
+        "startFrame": 0
+      }
+    },
+    "surprise": {
+      "file": "surprise.png",
+      "loop": false,
+      "sprite": {
+        "frameWidth": 120,
+        "frameHeight": 140,
+        "frameCount": 8,
+        "columns": 8,
+        "fps": 10,
+        "startFrame": 0
+      }
+    }
+  }
+}

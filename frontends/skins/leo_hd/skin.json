@@ -1,0 +1,55 @@
+{
+  "name": "leo_hd",
+  "version": "2.0",
+  "size": {
+    "width": 250,
+    "height": 250
+  },
+  "animations": {
+    "walk": {
+      "file": "/Users/maoqijun/Movies/leo/leo_source/20260422-里奥～里奥～为什么你打喷嚏还要生气#洛克王国 #-图1.mp4",
+      "loop": true,
+      "fps": 30
+    },
+    "idle": {
+      "file": "/Users/maoqijun/Movies/leo/leo_source/20260422-里奥～里奥～为什么你打喷嚏还要生气#洛克王国 #-图2.mp4",
+      "loop": true,
+      "fps": 30
+    },
+    "surprise": {
+      "file": "/Users/maoqijun/Movies/leo/leo_source/20260422-里奥～里奥～为什么你打喷嚏还要生气#洛克王国 #-图3.mp4",
+      "loop": false,
+      "fps": 30
+    },
+    "angry": {
+      "file": "/Users/maoqijun/Movies/leo/leo_source/20260422-里奥～里奥～为什么你打喷嚏还要生气#洛克王国 #-图4.mp4",
+      "loop": false,
+      "fps": 30
+    },
+    "bow": {
+      "file": "/Users/maoqijun/Movies/leo/leo_source/20260422-里奥～里奥～为什么你打喷嚏还要生气#洛克王国 #-图5.mp4",
+      "loop": false,
+      "fps": 30
+    },
+    "sad": {
+      "file": "/Users/maoqijun/Movies/leo/leo_source/20260422-里奥～里奥～为什么你打喷嚏还要生气#洛克王国 #-图6.mp4",
+      "loop": false,
+      "fps": 30
+    },
+    "jump": {
+      "file": "/Users/maoqijun/Movies/leo/leo_source/20260422-里奥～里奥～为什么你打喷嚏还要生气#洛克王国 #-图7.mp4",
+      "loop": false,
+      "fps": 30
+    },
+    "fly": {
+      "file": "/Users/maoqijun/Movies/leo/leo_source/20260422-里奥～里奥～为什么你打喷嚏还要生气#洛克王国 #-图8.mp4",
+      "loop": true,
+      "fps": 30
+    },
+    "happy": {
+      "file": "/Users/maoqijun/Movies/leo/leo_source/20260422-里奥～里奥～为什么你打喷嚏还要生气#洛克王国 #-图9.mp4",
+      "loop": false,
+      "fps": 30
+    }
+  }
+}

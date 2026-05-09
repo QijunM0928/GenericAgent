@@ -1,0 +1,648 @@
+"""Desktop Pet v3 — macOS only, behavior state machine, correct fps.
+
+Uses PyObjC + NSWindow with hitTest_ for transparent click-through.
+Sprite sheet based animations with per-animation fps.
+"""
+import os, sys, json, random, threading, socket, time
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+from PIL import Image
+
+PORT = 51983
+SKINS_DIR = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'skins')
+
+# ─── Skin Loader ───────────────────────────────────────────────────────────────
+
+def load_skin(skin_name):
+    """Load skin config and pre-crop all animation frames as PIL Images."""
+    skin_dir = os.path.join(SKINS_DIR, skin_name)
+    with open(os.path.join(skin_dir, 'skin.json')) as f:
+        cfg = json.load(f)
+    animations = {}
+    for state, anim_cfg in cfg.get('animations', {}).items():
+        img_path = os.path.join(skin_dir, anim_cfg['file'])
+        sprite = anim_cfg.get('sprite')
+        if sprite:
+            sheet = Image.open(img_path).convert('RGBA')
+            fw, fh = sprite['frameWidth'], sprite['frameHeight']
+            cols = sprite.get('columns', 1)
+            count = sprite['frameCount']
+            start = sprite.get('startFrame', 0)
+            fps = sprite.get('fps', 10)
+            frames = []
+            for i in range(start, start + count):
+                r, c = divmod(i, cols)
+                box = (c * fw, r * fh, (c + 1) * fw, (r + 1) * fh)
+                frames.append(sheet.crop(box).copy())
+            animations[state] = {'frames': frames, 'fps': fps, 'loop': anim_cfg.get('loop', True)}
+        else:
+            gif = Image.open(img_path)
+            frames = []
+            try:
+                while True:
+                    frames.append(gif.copy().convert('RGBA'))
+                    gif.seek(gif.tell() + 1)
+            except EOFError:
+                pass
+            fps = anim_cfg.get('fps', 10)
+            animations[state] = {'frames': frames or [gif.convert('RGBA')], 'fps': fps, 'loop': anim_cfg.get('loop', True)}
+    size = cfg.get('size', {})
+    return {
+        'name': cfg.get('name', skin_name),
+        'width': size.get('width', 120),
+        'height': size.get('height', 140),
+        'animations': animations,
+    }
+
+def discover_skins():
+    """Return list of available skin directory names."""
+    skins = []
+    if os.path.isdir(SKINS_DIR):
+        for d in sorted(os.listdir(SKINS_DIR)):
+            if os.path.isfile(os.path.join(SKINS_DIR, d, 'skin.json')):
+                skins.append(d)
+    return skins
+
+# ─── Behavior Constants ────────────────────────────────────────────────────────
+
+LOOP_STATES = {'idle', 'walk', 'run', 'sprint', 'fly'}
+EMOTION_STATES = {'angry', 'happy', 'sad', 'surprise', 'bow', 'jump'}
+
+MOVE_SPEEDS = {'walk': 1, 'run': 2, 'sprint': 3, 'fly': 1}
+MOVE_DURATIONS = {'walk': (4, 8), 'run': (3, 5), 'sprint': (1, 3), 'fly': (3, 6)}
+
+# Behavior probabilities: idle=70%, move=15%, emotion=15%
+BEHAVIOR_PROBS = [('idle', 0.7), ('move', 0.85), ('emotion', 1.0)]
+
+# Behavior timer intervals — long idle, occasional action
+BEHAVIOR_DELAYS = {
+    'idle': (30, 60),    # 30-60s of stillness before next action
+    'move': (20, 40),    # after moving, rest 20-40s
+    'emotion': (25, 50), # after emotion, rest 25-50s
+    'sprint': (20, 40),
+}
+
+# ─── macOS Pet (PyObjC + NSWindow) ────────────────────────────────────────────
+
+import objc
+from AppKit import (
+    NSApplication, NSApp, NSWindow, NSView, NSImageView, NSImage,
+    NSColor, NSBackingStoreBuffered, NSFloatingWindowLevel,
+    NSMakePoint, NSMakeRect, NSMakeSize, NSMenu, NSMenuItem,
+    NSEvent, NSLeftMouseDown, NSLeftMouseDragged, NSLeftMouseUp,
+    NSRightMouseDown, NSOtherMouseDown,
+    NSCompositingOperationSourceOver, NSImageScaleProportionallyUpOrDown,
+)
+from Quartz import CGMainDisplayID, CGDisplayPixelsWide, CGDisplayPixelsHigh
+from Foundation import NSObject, NSRunLoop, NSDate, NSTimer
+
+
+class MacPet(NSObject):
+    """macOS desktop pet with behavior state machine."""
+
+    def init(self):
+        self = objc.super(MacPet, self).init()
+        if self is None:
+            return None
+
+        # Config
+        self.skin_name = 'leo_hd'
+        self.skin = load_skin(self.skin_name)
+        self.available_skins = discover_skins()
+        self.display_width = self.skin['width']
+        self.display_height = self.skin['height']
+
+        # Screen size
+        main_id = CGMainDisplayID()
+        self.screen_width = CGDisplayPixelsWide(main_id)
+        self.screen_height = CGDisplayPixelsHigh(main_id)
+
+        # State
+        self.current_state = 'idle'
+        self.frame_idx = 0
+        self._is_dragging = False
+        self._drag_start = None
+        self._behavior_suspended = False
+        self._behavior_suspend_timer = None
+        self._direction = 1  # 1=right, -1=left
+        self._breath_idx = 0
+        self.behavior_timer = None
+        self.move_timer = None
+        self._animation_timer = None
+        self._toast_window = None
+        self._toast_timer = None
+        self._last_behavior_type = 'idle'  # for delay calculation
+
+        # Create window
+        initial_x = self.screen_width // 2
+        initial_y = self.screen_height - self.display_height - 80
+        self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(initial_x, self.screen_height - initial_y - self.display_height,
+                       self.display_width, self.display_height),
+            0,  # borderless
+            NSBackingStoreBuffered,
+            False
+        )
+        self.window.setOpaque_(False)
+        self.window.setBackgroundColor_(NSColor.clearColor())
+        self.window.setLevel_(NSFloatingWindowLevel)
+        self.window.setMovableByWindowBackground_(False)
+        self.window.setAcceptsMouseMovedEvents_(True)
+
+        # Create content view with hitTest_
+        pet_ref = self
+
+        class PetView(NSView):
+            def hitTest_(self, point):
+                view_point = self.convertPoint_fromView_(point, None)
+                x, y = int(view_point.x), int(view_point.y)
+                img_view = self.subviews() and self.subviews()[0]
+                if img_view and img_view.image():
+                    img = img_view.image()
+                    img_y = int(img.size().height) - y - 1
+                    if 0 <= x < int(img.size().width) and 0 <= img_y < int(img.size().height):
+                        rep = img.representations()
+                        if rep:
+                            rep0 = rep[0]
+                            try:
+                                alpha = rep0.colorAtX_y_(x, img_y).alphaComponent()
+                                if alpha > 0.1:
+                                    return self
+                            except:
+                                pass
+                return None
+
+            def mouseDown_(self, event):
+                pet_ref._on_mouse_down(event)
+
+            def mouseDragged_(self, event):
+                pet_ref._on_mouse_dragged(event)
+
+            def mouseUp_(self, event):
+                pet_ref._on_mouse_up(event)
+
+            def rightMouseDown_(self, event):
+                pet_ref._on_right_click(event)
+
+        self.content_view = PetView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, self.display_width, self.display_height)
+        )
+
+        # Image view
+        self.image_view = NSImageView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, self.display_width, self.display_height)
+        )
+        self.image_view.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+        self.content_view.addSubview_(self.image_view)
+        self.window.setContentView_(self.content_view)
+
+        # Show first frame
+        self._show_frame()
+        self.window.makeKeyAndOrderFront_(None)
+        NSApp.activateIgnoringOtherApps_(True)
+
+        # Start animation timer (will be rescheduled per-frame based on fps)
+        self._schedule_animation_step()
+
+        # Start behavior timer
+        self._schedule_next_behavior()
+
+        # Start HTTP server
+        self._start_http_server()
+
+        return self
+
+    # ─── Animation ─────────────────────────────────────────────────────
+
+    def _current_anim(self):
+        return self.skin['animations'].get(self.current_state, self.skin['animations'].get('idle'))
+
+    def _show_frame(self):
+        anim = self._current_anim()
+        if not anim or not anim['frames']:
+            return
+        frame = anim['frames'][self.frame_idx % len(anim['frames'])]
+        self._display_pil(frame)
+
+    def _display_pil(self, pil_image):
+        from AppKit import NSBitmapImageRep, NSCalibratedRGBColorSpace
+        w, h = pil_image.size
+        data = pil_image.tobytes()
+        rep = NSBitmapImageRep.alloc().initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel_(
+            None, w, h, 8, 4, True, False, NSCalibratedRGBColorSpace, w * 4, 32
+        )
+        rep.getBitmapDataPlanes_()[0][:] = data
+        img = NSImage.alloc().initWithSize_(NSMakeSize(w, h))
+        img.addRepresentation_(rep)
+        self.image_view.setImage_(img)
+
+    def _schedule_animation_step(self):
+        """Schedule next animation frame based on current animation's fps."""
+        anim = self._current_anim()
+        if not anim:
+            return
+        interval = 1.0 / anim['fps']
+        self._animation_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            interval, self, 'animateStep:', None, False
+        )
+
+    def idleBreath_(self, timer):
+        """Gentle breathing: cycle through first 4 frames at 3fps."""
+        # 2-frame breathing: 0, 1 (subtle rise and fall)
+        breath_frames = [0, 1]
+        self.frame_idx = breath_frames[self._breath_idx % len(breath_frames)]
+        self._breath_idx += 1
+        self._show_frame()
+
+    def animateStep_(self, timer):
+        anim = self._current_anim()
+        if not anim:
+            self._schedule_animation_step()
+            return
+        total = len(anim['frames'])
+        self.frame_idx += 1
+        if self.frame_idx >= total:
+            if anim['loop']:
+                self.frame_idx = 0
+            else:
+                self.frame_idx = total - 1
+                # Non-looping animation finished → return to idle
+                if self.current_state != 'idle':
+                    self.set_state('idle')
+                    self._schedule_animation_step()
+                    return
+        self._show_frame()
+        self._schedule_animation_step()
+
+    # ─── State Management ──────────────────────────────────────────────
+
+    def set_state(self, state):
+        if state not in self.skin['animations']:
+            return
+        # Invalidate old animation timer so fps changes take effect
+        if self._animation_timer and self._animation_timer.isValid():
+            self._animation_timer.invalidate()
+        self.current_state = state
+        self.frame_idx = 0
+        self._show_frame()
+        # Idle: gentle breathing at 3fps using only first 4 frames
+        if state == 'idle':
+            self._animation_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                1.0 / 3, self, 'idleBreath:', None, True
+            )
+        else:
+            self._schedule_animation_step()
+
+    def set_state_safe(self, state):
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            'setStateDirect:', state, False
+        )
+
+    def setStateDirect_(self, state):
+        self.set_state(state)
+
+    # ─── Mouse Events ──────────────────────────────────────────────────
+
+    def _on_mouse_down(self, event):
+        # Double-click: trigger random emotion
+        if event.clickCount() >= 2:
+            available = [s for s in EMOTION_STATES if s in self.skin['animations']]
+            if available:
+                self.set_state(random.choice(available))
+            self._is_dragging = False  # cancel any drag from first click
+            return
+        self._is_dragging = True
+        # Store window origin and global mouse position at drag start
+        win_frame = self.window.frame()
+        self._drag_offset_x = win_frame.origin.x - event.locationInWindow().x + win_frame.origin.x
+        # Calculate: offset = window_x - mouse_screen_x
+        mouse_screen = NSEvent.mouseLocation()
+        self._drag_offset_x = win_frame.origin.x - mouse_screen.x
+        self._drag_offset_y = win_frame.origin.y - mouse_screen.y
+        self._suspend_behavior()
+
+    def _on_mouse_dragged(self, event):
+        if not self._is_dragging:
+            return
+        # Use global mouse location for direct tracking
+        mouse_screen = NSEvent.mouseLocation()
+        new_x = mouse_screen.x + self._drag_offset_x
+        new_y = mouse_screen.y + self._drag_offset_y
+        self.window.setFrameOrigin_(NSMakePoint(new_x, new_y))
+
+    def _on_mouse_up(self, event):
+        self._is_dragging = False
+        # Resume behavior after 2 seconds
+        self._behavior_suspended = True
+        if self._behavior_suspend_timer and self._behavior_suspend_timer.isValid():
+            self._behavior_suspend_timer.invalidate()
+        self._behavior_suspend_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            2.0, self, 'resumeBehavior:', None, False
+        )
+
+    def _on_right_click(self, event):
+        menu = NSMenu.alloc().init()
+
+        # Skin submenu
+        skin_menu = NSMenu.alloc().init()
+        skin_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_('Skins', None, '')
+        skin_item.setSubmenu_(skin_menu)
+        for sname in self.available_skins:
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(sname, 'changeSkin:', '')
+            item.setTarget_(self)
+            item.setRepresentedObject_(sname)
+            if sname == self.skin_name:
+                item.setState_(1)
+            skin_menu.addItem_(item)
+        menu.addItem_(skin_item)
+
+        # State submenu
+        state_menu = NSMenu.alloc().init()
+        state_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_('Animation', None, '')
+        state_item.setSubmenu_(state_menu)
+        for sname in self.skin['animations']:
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(sname, 'changeState:', '')
+            item.setTarget_(self)
+            item.setRepresentedObject_(sname)
+            if sname == self.current_state:
+                item.setState_(1)
+            state_menu.addItem_(item)
+        menu.addItem_(state_item)
+
+        menu.addItem_(NSMenuItem.separatorItem())
+        quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_('Quit', 'terminate:', '')
+        menu.addItem_(quit_item)
+
+        NSApp.activateIgnoringOtherApps_(True)
+        NSMenu.popUpContextMenu_withEvent_forView_(menu, event, self.content_view)
+
+    def changeSkin_(self, sender):
+        new_skin = sender.representedObject()
+        if new_skin == self.skin_name:
+            return
+        self.skin_name = new_skin
+        self.skin = load_skin(new_skin)
+        self.display_width = self.skin['width']
+        self.display_height = self.skin['height']
+        self.frame_idx = 0
+        self.current_state = 'idle'
+        win_frame = self.window.frame()
+        self.window.setFrame_display_(
+            NSMakeRect(win_frame.origin.x, win_frame.origin.y,
+                       self.display_width, self.display_height), True)
+        self.image_view.setFrame_(NSMakeRect(0, 0, self.display_width, self.display_height))
+        self.content_view.setFrame_(NSMakeRect(0, 0, self.display_width, self.display_height))
+        self._show_frame()
+        self._schedule_animation_step()
+
+    def changeState_(self, sender):
+        new_state = sender.representedObject()
+        self.set_state(new_state)
+
+    # ─── Behavior (state machine + probability) ────────────────────────
+
+    def _schedule_next_behavior(self):
+        lo, hi = BEHAVIOR_DELAYS.get(self._last_behavior_type, (3, 8))
+        delay = random.uniform(lo, hi)
+        self.behavior_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            delay, self, 'triggerBehavior:', None, False
+        )
+
+    def triggerBehavior_(self, timer):
+        if self._behavior_suspended:
+            self._schedule_next_behavior()
+            return
+
+        states = list(self.skin['animations'].keys())
+        loop_states = [s for s in states if self.skin['animations'][s]['loop'] and s != 'idle']
+        move_states = [s for s in loop_states if s in MOVE_SPEEDS]
+        emotion_states = [s for s in states if s in EMOTION_STATES]
+
+        roll = random.random()
+        if roll < 0.7:
+            # Idle — stay still
+            self.set_state('idle')
+            self._last_behavior_type = 'idle'
+        elif roll < 0.85 and move_states:
+            # Random moving state
+            state = random.choice(move_states)
+            self.set_state(state)
+            self._direction = random.choice([-1, 1])
+            self._start_moving(state)
+            self._last_behavior_type = 'move'
+        elif emotion_states:
+            # Random emotion
+            self.set_state(random.choice(emotion_states))
+            self._last_behavior_type = 'emotion'
+        else:
+            self.set_state('idle')
+            self._last_behavior_type = 'idle'
+
+        self._schedule_next_behavior()
+
+    def _start_moving(self, state):
+        if self.move_timer and self.move_timer.isValid():
+            self.move_timer.invalidate()
+        self.move_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.05, self, 'moveStep:', None, True
+        )
+        lo, hi = MOVE_DURATIONS.get(state, (2, 5))
+        duration = random.uniform(lo, hi)
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            duration, self, 'stopMoving:', None, False
+        )
+
+    def moveStep_(self, timer):
+        if self._behavior_suspended:
+            return
+        win_frame = self.window.frame()
+        speed = MOVE_SPEEDS.get(self.current_state, 2)
+        new_x = win_frame.origin.x + self._direction * speed
+        # Bounce at screen edges
+        if new_x < 0 or new_x + self.display_width > self.screen_width:
+            self._direction *= -1
+            new_x = win_frame.origin.x + self._direction * speed
+            self._show_frame()
+        self.window.setFrameOrigin_(NSMakePoint(new_x, win_frame.origin.y))
+
+    def stopMoving_(self, timer):
+        if self.move_timer and self.move_timer.isValid():
+            self.move_timer.invalidate()
+        self.move_timer = None
+        if self.current_state in MOVE_SPEEDS:
+            self.set_state('idle')
+
+    def _suspend_behavior(self):
+        self._behavior_suspended = True
+        if self.move_timer and self.move_timer.isValid():
+            self.move_timer.invalidate()
+            self.move_timer = None
+        if self._behavior_suspend_timer and self._behavior_suspend_timer.isValid():
+            self._behavior_suspend_timer.invalidate()
+        self._behavior_suspend_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            2.0, self, 'resumeBehavior:', None, False
+        )
+
+    def resumeBehavior_(self, timer):
+        self._behavior_suspended = False
+        self._behavior_suspend_timer = None
+
+    # ─── Toast ─────────────────────────────────────────────────────────
+
+    def show_toast_safe(self, msg):
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            'showToastDirect:', msg, False
+        )
+
+    def showToastDirect_(self, msg):
+        self._show_toast(msg)
+
+    def _show_toast(self, message):
+        if self._toast_window:
+            self._toast_window.orderOut_(None)
+            self._toast_window = None
+        if self._toast_timer and self._toast_timer.isValid():
+            self._toast_timer.invalidate()
+
+        from AppKit import NSTextField, NSAttributedString, NSFont
+        font = NSFont.systemFontOfSize_(13)
+        attrs = {NSFontAttributeName: font}
+        attr_str = NSAttributedString.alloc().initWithString_attributes_(message, attrs)
+        text_size = attr_str.size()
+        tw = max(int(text_size.width) + 24, 60)
+        th = max(int(text_size.height) + 16, 30)
+
+        win_frame = self.window.frame()
+        tx = win_frame.origin.x + (self.display_width - tw) // 2
+        ty = win_frame.origin.y + self.display_height + 5
+
+        self._toast_window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(tx, ty, tw, th), 0, NSBackingStoreBuffered, False
+        )
+        self._toast_window.setOpaque_(False)
+        self._toast_window.setBackgroundColor_(NSColor.clearColor())
+        self._toast_window.setLevel_(NSFloatingWindowLevel)
+
+        class ToastView(NSView):
+            def drawRect_(self, rect):
+                from AppKit import NSBezierPath, NSColor as C
+                bg = C.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.99, 0.88, 0.95)
+                border = C.colorWithCalibratedRed_green_blue_alpha_(0.6, 0.6, 0.6, 0.8)
+                path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, 8, 8)
+                bg.setFill()
+                path.fill()
+                border.setStroke()
+                path.setLineWidth_(1)
+                path.stroke()
+
+        tv = ToastView.alloc().initWithFrame_(NSMakeRect(0, 0, tw, th))
+        label = NSTextField.alloc().initWithFrame_(NSMakeRect(8, 4, tw - 16, th - 8))
+        label.setStringValue_(message)
+        label.setFont_(font)
+        label.setBezeled_(False)
+        label.setDrawsBackground_(False)
+        label.setEditable_(False)
+        label.setSelectable_(False)
+        tv.addSubview_(label)
+        self._toast_window.setContentView_(tv)
+        self._toast_window.orderFront_(None)
+
+        self._toast_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            3.0, self, 'dismissToast:', None, False
+        )
+
+    def dismissToast_(self, timer):
+        if self._toast_window:
+            self._toast_window.orderOut_(None)
+            self._toast_window = None
+        self._toast_timer = None
+
+    # ─── HTTP Server ────────────────────────────────────────────────────
+
+    def _start_http_server(self):
+        pet = self
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                parsed = urlparse(self.path)
+                params = parse_qs(parsed.query)
+                if 'state' in params:
+                    pet.set_state_safe(params['state'][0])
+                    self._respond(200, b'ok')
+                elif 'status' in params:
+                    info = {'state': pet.current_state, 'skin': pet.skin_name, 'direction': pet._direction}
+                    self._respond(200, json.dumps(info).encode())
+                elif 'msg' in params:
+                    pet.show_toast_safe(params['msg'][0])
+                    self._respond(200, b'ok')
+                else:
+                    self._respond(400, b'?state=idle/walk/fly&msg=hello')
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get('Content-Length', 0))).decode()
+                if body:
+                    pet.show_toast_safe(body)
+                    self._respond(200, b'ok')
+                else:
+                    self._respond(400, b'empty body')
+
+            def _respond(self, code, data):
+                self.send_response(code)
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *a):
+                pass
+
+        HTTPServer.allow_reuse_address = True
+        try:
+            srv = HTTPServer(('127.0.0.1', PORT), Handler)
+            t = threading.Thread(target=srv.serve_forever, daemon=True)
+            t.start()
+            print(f'Pet HTTP server: http://127.0.0.1:{PORT}/?msg=hello')
+        except OSError:
+            print(f'Port {PORT} in use, HTTP server not started')
+
+    # ─── Run Loop ──────────────────────────────────────────────────────
+
+    def run(self):
+        import signal
+        # Use CFRunLoop timer to poll for SIGINT, since NSRunLoop eats signals
+        self._sigint_received = False
+        signal.signal(signal.SIGINT, lambda s, f: self._handle_sigint())
+
+        def check_sigint(timer):
+            if self._sigint_received:
+                NSApp.terminate_(None)
+
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.5, self, 'checkSigint:', None, True
+        )
+
+        app = NSApplication.sharedApplication()
+        app.setDelegate_(self)
+        app.run()
+
+    def _handle_sigint(self):
+        self._sigint_received = True
+
+    def checkSigint_(self, timer):
+        if self._sigint_received:
+            NSApp.terminate_(None)
+
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+if __name__ == '__main__':
+    # Single instance check
+    _s = socket.socket()
+    try:
+        _s.connect(('127.0.0.1', PORT))
+        _s.close()
+        print(f'Pet already running on port {PORT}, exiting.')
+        sys.exit(0)
+    except ConnectionRefusedError:
+        pass
+
+    app = NSApplication.sharedApplication()
+    pet = MacPet.alloc().init()
+    pet.run()

@@ -1,0 +1,103 @@
+{
+  "animations": {
+    "idle": {
+      "name": "idle",
+      "file": "idle.webm",
+      "width": 720,
+      "height": 720,
+      "fps": 30.0,
+      "frames": 151,
+      "duration": 5.033,
+      "loop": true,
+      "alpha_mode": "dual_stream"
+    },
+    "walk": {
+      "name": "walk",
+      "file": "walk.webm",
+      "width": 720,
+      "height": 720,
+      "fps": 30.0,
+      "frames": 82,
+      "duration": 2.733,
+      "loop": true,
+      "alpha_mode": "dual_stream"
+    },
+    "surprise": {
+      "name": "surprise",
+      "file": "surprise.webm",
+      "width": 720,
+      "height": 720,
+      "fps": 30.0,
+      "frames": 61,
+      "duration": 2.033,
+      "loop": false,
+      "alpha_mode": "dual_stream"
+    },
+    "angry": {
+      "name": "angry",
+      "file": "angry.webm",
+      "width": 720,
+      "height": 720,
+      "fps": 30.0,
+      "frames": 63,
+      "duration": 2.1,
+      "loop": false,
+      "alpha_mode": "dual_stream"
+    },
+    "bow": {
+      "name": "bow",
+      "file": "bow.webm",
+      "width": 720,
+      "height": 720,
+      "fps": 30.0,
+      "frames": 66,
+      "duration": 2.2,
+      "loop": false,
+      "alpha_mode": "dual_stream"
+    },
+    "sad": {
+      "name": "sad",
+      "file": "sad.webm",
+      "width": 720,
+      "height": 720,
+      "fps": 30.0,
+      "frames": 69,
+      "duration": 2.3,
+      "loop": false,
+      "alpha_mode": "dual_stream"
+    },
+    "jump": {
+      "name": "jump",
+      "file": "jump.webm",
+      "width": 720,
+      "height": 720,
+      "fps": 30.0,
+      "frames": 184,
+      "duration": 6.133,
+      "loop": false,
+      "alpha_mode": "dual_stream"
+    },
+    "fly": {
+      "name": "fly",
+      "file": "fly.webm",
+      "width": 720,
+      "height": 720,
+      "fps": 30.0,
+      "frames": 195,
+      "duration": 6.5,
+      "loop": true,
+      "alpha_mode": "dual_stream"
+    },
+    "happy": {
+      "name": "happy",
+      "file": "happy.webm",
+      "width": 720,
+      "height": 720,
+      "fps": 30.0,
+      "frames": 65,
+      "duration": 2.167,
+      "loop": false,
+      "alpha_mode": "dual_stream"
+    }
+  }
+}
