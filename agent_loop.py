@@ -46,8 +46,10 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
     ]
     turn = 0;  handler.max_turns = max_turns
     while turn < handler.max_turns:
-        turn += 1
-        if verbose: yield f"**LLM Running (Turn {turn}) ...**\n\n"
+        turn += 1; turnstr = f'LLM Running (Turn {turn}) ...'
+        if handler.parent.task_dir: turnstr = f'Turn {turn} ...'
+        if verbose: turnstr = f'**{turnstr}**'
+        yield f"\n\n{turnstr}\n\n"
         if turn%10 == 0: client.last_tools = ''  # 每10轮重置一次工具描述，避免上下文过大导致的模型性能下降
         response_gen = client.chat(messages=messages, tools=tools_schema)
         if verbose:
@@ -68,7 +70,7 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
             if tool_name == 'no_tool': pass
             else: 
                 if verbose: yield f"🛠️ Tool: `{tool_name}`  📥 args:\n````text\n{get_pretty_json(args)}\n````\n"
-                else: yield f"🛠️ {tool_name}\n"
+                else: yield f"🛠️ {tool_name}({_compact_tool_args(tool_name, args)})\n\n\n"
             handler.current_turn = turn
             gen = handler.dispatch(tool_name, args, response, index=ii)
             try:
@@ -99,7 +101,12 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
 def _clean_content(text):
     if not text: return ''
     def _shrink_code(m):
-        return m.group(0)
+        lines = m.group(0).split('\n')
+        lang = lines[0].replace('```','').strip()
+        body = [l for l in lines[1:-1] if l.strip()]
+        if len(body) <= 6: return m.group(0)
+        preview = '\n'.join(body[:5])
+        return f'```{lang}\n{preview}\n  ... ({len(body)} lines)\n```'
     text = re.sub(r'```[\s\S]*?```', _shrink_code, text)
     for p in [r'<file_content>[\s\S]*?</file_content>', r'<tool_(?:use|call)>[\s\S]*?</tool_(?:use|call)>', r'(\r?\n){3,}']:
         text = re.sub(p, '\n\n' if '\\n' in p else '', text)
@@ -110,4 +117,9 @@ def _compact_tool_args(name, args):
     for k in ('path',): 
         if k in a: a[k] = os.path.basename(a[k])
     if name == 'update_working_checkpoint': s = a.get('key_info', ''); return (s[:60]+'...') if len(s)>60 else s
+    if name == 'ask_user':
+        q = str(a.get('question', ''))
+        cs = a.get('candidates') or []
+        if cs: q += '\ncandidates:\n' + '\n'.join(f'- {c}' for c in cs)
+        return q
     s = json.dumps(a, ensure_ascii=False); return (s[:120]+'...') if len(s)>120 else s

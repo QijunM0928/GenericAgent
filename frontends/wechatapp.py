@@ -8,10 +8,15 @@ _TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 from agentmain import GeneraticAgent
 
 # ── WxBotClient (inline from wx_bot_client.py) ──
+for _k in ('HTTPS_PROXY', 'https_proxy'):
+    os.environ.pop(_k, None)  # avoid inherited proxy breaking WeChat long-poll SSL
 API = 'https://ilinkai.weixin.qq.com'
 TOKEN_FILE = Path.home() / '.wxbot' / 'token.json'
 TOKEN_FILE.parent.mkdir(exist_ok=True)
-VER, MSG_USER, MSG_BOT, ITEM_TEXT, STATE_FINISH = '2.1.8', 1, 2, 1, 2
+VER, MSG_USER, MSG_BOT, ITEM_TEXT, STATE_FINISH = '2.1.10', 1, 2, 1, 2
+ILINK_APP_ID = 'bot'
+ILINK_APP_CLIENT_VERSION = (2 << 16) | (1 << 8) | 10
+UA = f'openclaw-weixin/{VER}'
 ITEM_IMAGE, ITEM_FILE, ITEM_VIDEO = 2, 4, 5
 CDN_BASE = 'https://novac2c.cdn.weixin.qq.com/c2c'
 
@@ -41,14 +46,20 @@ class WxBotClient:
         self._tf.write_text(json.dumps(d, ensure_ascii=False, indent=2), 'utf-8')
 
     def _post(self, ep, body, timeout=15):
-        h = {'Content-Type': 'application/json', 'AuthorizationType': 'ilink_bot_token', 'X-WECHAT-UIN': _uin()}
-        if self.token: h['Authorization'] = f'Bearer {self.token}'
-        r = requests.post(f'{API}/{ep}', json=body, headers=h, timeout=timeout)
+        data = json.dumps(body, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        h = {'Content-Type': 'application/json', 'AuthorizationType': 'ilink_bot_token',
+             'Content-Length': str(len(data)), 'X-WECHAT-UIN': _uin(),
+             'iLink-App-Id': ILINK_APP_ID,
+             'iLink-App-ClientVersion': str(ILINK_APP_CLIENT_VERSION),
+             'User-Agent': UA}
+        tok = (self.token or '').strip()
+        if tok: h['Authorization'] = f'Bearer {tok}'
+        r = requests.post(f'{API}/{ep}', data=data, headers=h, timeout=timeout)
         r.raise_for_status()
         return r.json()
 
     def login_qr(self, poll_interval=2):
-        r = requests.get(f'{API}/ilink/bot/get_bot_qrcode', params={'bot_type': 3}, timeout=10)
+        r = requests.get(f'{API}/ilink/bot/get_bot_qrcode', params={'bot_type': 3}, headers={'User-Agent': UA}, timeout=10)
         r.raise_for_status()
         d = r.json()
         qr_id, url = d['qrcode'], d.get('qrcode_img_content', '')
@@ -58,9 +69,10 @@ class WxBotClient:
             qrcode.make(url).save(str(img))
             # Print QR as ASCII art in terminal (works everywhere)
             print('─' * 50, file=sys.__stdout__)
-            qr_obj = qrcode.QRCode()
-            qr_obj.add_data(url)
-            qr_obj.print_ascii(invert=True, out=sys.__stdout__)
+            qr = qrcode.QRCode(border=1)
+            qr.add_data(url)
+            qr.make(fit=True)
+            qr.print_ascii(invert=True)
             print('─' * 50, file=sys.__stdout__)
             print(f'📱 用微信扫描上方二维码 或 打开图片: {img}', file=sys.__stdout__)
             print('─' * 50, file=sys.__stdout__)
@@ -68,7 +80,7 @@ class WxBotClient:
         last = ''
         while True:
             time.sleep(poll_interval)
-            try: s = requests.get(f'{API}/ilink/bot/get_qrcode_status', params={'qrcode': qr_id}, timeout=60).json()
+            try: s = requests.get(f'{API}/ilink/bot/get_qrcode_status', params={'qrcode': qr_id}, headers={'User-Agent': UA}, timeout=60).json()
             except requests.exceptions.ReadTimeout: continue
             st = s.get('status', '')
             if st != last: print(f'  状态: {st}', file=sys.__stdout__); last = st
@@ -82,7 +94,8 @@ class WxBotClient:
     def get_updates(self, timeout=30):
         try:
             resp = self._post('ilink/bot/getupdates',
-                              {'get_updates_buf': self._buf or '', 'base_info': {'channel_version': VER}},
+                              {'get_updates_buf': self._buf or '',
+                               'base_info': {'channel_version': VER}},
                               timeout=timeout + 5)
         except requests.exceptions.ReadTimeout:
             return []
@@ -105,10 +118,15 @@ class WxBotClient:
 
     def send_typing(self, to_user_id, typing_ticket='', cancel=False, room_id=''):
         body = {
-            'to_user_id': to_user_id, 'typing_ticket': typing_ticket,
-            'typing_status': 2 if cancel else 1, 'base_info': {'channel_version': VER}}
+            'ilink_user_id': to_user_id, 'typing_ticket': typing_ticket,
+            'status': 2 if cancel else 1, 'base_info': {'channel_version': VER}}
         if room_id: body['room_id'] = room_id
         return self._post('ilink/bot/sendtyping', body)
+
+    def get_typing_ticket(self, to_user_id, context_token=''):
+        payload = {'ilink_user_id': to_user_id}
+        if context_token: payload['context_token'] = context_token
+        return self._post('ilink/bot/getconfig', payload).get('typing_ticket', '')
 
     def _enc(self, raw, aes_key):
         pad = 16 - (len(raw) % 16)
@@ -120,7 +138,7 @@ class WxBotClient:
         last_err = None
         for attempt in range(1, 4):
             try:
-                r = requests.post(url, data=data, headers={'Content-Type': 'application/octet-stream'}, timeout=timeout)
+                r = requests.post(url, data=data, headers={'Content-Type': 'application/octet-stream', 'User-Agent': UA}, timeout=timeout)
                 if 400 <= r.status_code < 500:
                     msg = r.headers.get('x-error-message') or r.text[:300]
                     raise RuntimeError(f'CDN upload client error {r.status_code}: {msg}')
@@ -143,12 +161,28 @@ class WxBotClient:
         filekey = uuid.uuid4().hex
         aes_key = os.urandom(16)
         ciphertext_size = ((len(raw) // 16) + 1) * 16
+        thumb_raw = b''; thumb_w = thumb_h = 0; thumb_ciphertext_size = 0
+        if item_key == 'image_item':
+            from io import BytesIO
+            from PIL import Image
+            im = Image.open(fp); im.thumbnail((240, 240))
+            thumb_w, thumb_h = im.size
+            if im.mode not in ('RGB', 'L'):
+                im = im.convert('RGB')
+            bio = BytesIO(); im.save(bio, format='JPEG', quality=85)
+            thumb_raw = bio.getvalue()
+            thumb_ciphertext_size = ((len(thumb_raw) // 16) + 1) * 16
         body = {
             'filekey': filekey, 'media_type': media_type, 'to_user_id': to_user_id,
             'rawsize': len(raw), 'rawfilemd5': hashlib.md5(raw).hexdigest(),
-            'filesize': ciphertext_size, 'no_need_thumb': True,
+            'filesize': ciphertext_size,
+            'no_need_thumb': item_key not in ('image_item', 'video_item'),
             'aeskey': aes_key.hex(), 'base_info': {'channel_version': VER}}
         if room_id: body['room_id'] = room_id
+        if thumb_raw:
+            body.update({'thumb_rawsize': len(thumb_raw),
+                         'thumb_rawfilemd5': hashlib.md5(thumb_raw).hexdigest(),
+                         'thumb_filesize': thumb_ciphertext_size})
         resp = self._post('ilink/bot/getuploadurl', body)
         upload_param = resp.get('upload_param', '')
         upload_url = resp.get('upload_full_url', '')
@@ -158,7 +192,19 @@ class WxBotClient:
         if item_key == 'file_item':
             item.update({'file_name': fp.name, 'len': str(len(raw))})
         elif item_key == 'image_item':
-            item.update({'mid_size': ciphertext_size})
+            thumb_param = resp.get('thumb_upload_param', '')
+            thumb_url = resp.get('thumb_upload_full_url', '')
+            if thumb_param or thumb_url:
+                thumb_media = self._upload(filekey, thumb_param, thumb_raw, aes_key=aes_key, upload_url=thumb_url)
+                thumb_size = thumb_ciphertext_size
+            else:
+                # Some getuploadurl responses only return a single upload_full_url for IMAGE.
+                # Keep ImageItem structurally complete by reusing the original CDN media as thumb_media.
+                thumb_media = media
+                thumb_size = ciphertext_size
+            item.update({'mid_size': ciphertext_size, 'thumb_media': thumb_media,
+                         'thumb_size': thumb_size,
+                         'thumb_width': thumb_w, 'thumb_height': thumb_h})
         elif item_key == 'video_item':
             item.update({'video_size': ciphertext_size})
         msg = {'from_user_id': '', 'to_user_id': to_user_id,
@@ -219,7 +265,7 @@ def _dl_media(items):
             try:
                 aes_key = (bytes.fromhex(base64.b64decode(ak).decode())
                            if sub.get('media', {}).get('aes_key') else bytes.fromhex(ak))
-                ct = requests.get(f'{CDN_BASE}/download?encrypted_query_param={quote(eq)}', timeout=60).content
+                ct = requests.get(f'{CDN_BASE}/download?encrypted_query_param={quote(eq)}', headers={'User-Agent': UA}, timeout=60).content
                 pt = AES.new(aes_key, AES.MODE_ECB).decrypt(ct); pt = pt[:-pt[-1]]
                 fname = sub.get('file_name') or f'{uuid.uuid4().hex[:8]}{ext or ".bin"}'
                 p = os.path.join(_TEMP_DIR, fname); open(p, 'wb').write(pt)
@@ -236,22 +282,29 @@ _TAG_PATS = [r'<' + t + r'>.*?</' + t + r'>' for t in ('thinking', 'tool_use')]
 _TAG_PATS.append(r'<file_content>.*?</file_content>')
 
 def _strip_md(t):
+    """Filter markdown for WeChat rich-text rendering.
+    WeChat natively renders: code fences, inline code, bold, italic,
+    H1-H4 headings, horizontal rules, tables. We only strip unsupported syntax."""
     def _trunc_code(m):
-        body = m.group().strip('`')
-        if '\n' not in body: return body
-        lines = body.split('\n', 1)[-1].split('\n')  # drop language line
-        if len(lines) > 10: return '\n'.join(lines[:10]) + '\n...'
-        return '\n'.join(lines)
+        full = m.group()
+        fence = re.match(r'`{3,}', full).group()
+        rest = full[len(fence):-len(fence)]
+        if '\n' not in rest: return full  # single-line, keep as-is
+        lang_line, _, body = rest.partition('\n')
+        lines = body.split('\n')
+        if len(lines) > 10:
+            return f'{fence}{lang_line}\n' + '\n'.join(lines[:10]) + '\n...\n' + fence
+        return full  # keep intact
     t = re.sub(r'(`{3,})[\s\S]*?\1', _trunc_code, t)
-    t = re.sub(r'`([^`]+)`', r'\1', t)
-    t = re.sub(r'!\[.*?\]\(.*?\)', '', t)
-    t = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', t)
-    t = re.sub(r'^#{1,6}\s+', '', t, flags=re.M)
-    t = re.sub(r'(\*{1,3})(.*?)\1', r'\2', t)
-    t = re.sub(r'^\s*[-*+]\s+', '• ', t, flags=re.M)
-    t = re.sub(r'^\s*\d+\.\s+', '', t, flags=re.M)
-    t = re.sub(r'^\s*>\s?', '', t, flags=re.M)
-    t = re.sub(r'^---+$', '', t, flags=re.M)
+    # inline code: keep (WeChat renders it)
+    # bold/italic (*/**/***): keep (WeChat renders it)
+    t = re.sub(r'!\[.*?\]\(.*?\)', '', t)                        # images: remove
+    t = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', t)              # links: text only
+    t = re.sub(r'^#{5,6}\s+', '', t, flags=re.M)                 # H5-H6: strip (H1-H4 kept)
+    t = re.sub(r'^\s*[-*+]\s+', '• ', t, flags=re.M)             # unordered list: bullet
+    t = re.sub(r'^\s*\d+\.\s+', '', t, flags=re.M)               # ordered list: strip num
+    t = re.sub(r'^\s*>\s?', '', t, flags=re.M)                   # blockquote: strip
+    # horizontal rules (---): keep (WeChat renders it)
     return re.sub(r'\n{3,}', '\n\n', t).strip()
 
 def _clean(t):
@@ -260,19 +313,16 @@ def _clean(t):
     for p in _TAG_PATS:
         t = re.sub(p, '', t, flags=re.DOTALL)
     t = re.sub(r'</?summary>', '', t)
-    return re.sub(r'\n{3,}', '\n\n', _strip_md(t)).strip() or '...'
+    return re.sub(r'\n{3,}', '\n\n', _strip_md(t)).strip()
 
-def _split(text, limit=1800):
-    """Split text into chunks respecting line boundaries."""
-    if len(text) <= limit: return [text]
-    chunks, cur = [], ''
-    for line in text.split('\n'):
-        if len(cur) + len(line) + 1 > limit and cur:
-            chunks.append(cur); cur = line
-        else:
-            cur = cur + '\n' + line if cur else line
-    if cur: chunks.append(cur)
-    return chunks or ['...']
+def _turn_parts(t):
+    _ph = []
+    safe = re.sub(r'`{4,}.*?`{4,}', lambda m: (_ph.append(m.group(0)), f'\x00PH{len(_ph)-1}\x00')[1], t, flags=re.DOTALL)
+    parts = re.split(r'(\**LLM Running \(Turn \d+\) \.\.\.\**)', safe)
+    parts = [re.sub(r'\x00PH(\d+)\x00', lambda m: _ph[int(m.group(1))], p) for p in parts]
+    if len(parts) < 4: return [], t
+    turns = [parts[i] + (parts[i+1] if i+1 < len(parts) else '') for i in range(1, len(parts), 2)]
+    return (([parts[0]] if parts[0].strip() else []) + turns[:-1], turns[-1])
 
 def _is_at_me(text):
     """检查消息是否@了机器人 (移除@前缀后返回剩余文本，否则返回None)"""
@@ -324,17 +374,50 @@ def on_message(bot, msg):
         return
 
     def _handle():
-        prompt = f"If you need to show files to user, use [FILE:filepath] in your response.\n\n{text}"
+        prompt = text if text.startswith('/') else f"If you need to show files to user, use [FILE:filepath] in your response.\n\n{text}"
         dq = agent.put_task(prompt, source="wechat")
-        try: bot.send_typing(uid, room_id=room_id)
-        except: pass
-        # Wait for completion
-        result = ''
+        _typing_stop = threading.Event()
+        def _keep_typing():
+            ticket = bot.get_typing_ticket(uid, ctx)
+            if not ticket: return
+            while not _typing_stop.is_set():
+                try: bot.send_typing(uid, ticket, room_id=room_id)
+                except: pass
+                _typing_stop.wait(2.0)
+        threading.Thread(target=_keep_typing, daemon=True).start()
+        result = ''; sent = 0; mi = 0; last_send = 0
+        def _wx_send(text):
+            s = text.strip(); t0 = time.time()
+            try:
+                bot.send_text(uid, s, context_token=ctx, room_id=room_id)
+                print(f'[WX] send ok len={len(s)} dt={time.time()-t0:.1f}s', file=sys.__stdout__)
+                return True
+            except Exception as e:
+                print(f'[WX] send err len={len(s)} dt={time.time()-t0:.1f}s {type(e).__name__}: {e}', file=sys.__stdout__)
+                return False
+        def _send(show):
+            nonlocal mi, last_send
+            now = time.time()
+            if mi >= 9 or not show.strip(): return False
+            if mi and now - last_send < 6 * mi: return None
+            if _wx_send(show[:2000]): mi += 1; last_send = time.time(); return True
+            return False
         try:
             while True:
                 item = dq.get(timeout=300)
                 if 'done' in item: result = item['done']; break
+                raw = item.get('next', '')
+                done, partial = _turn_parts(raw)
+                if len(done) > sent:
+                    merged = _clean('\n\n'.join(done[sent:]))
+                    print(f'[WX] turns={len(done)}/{len(done)+1} sent={sent} sending={len(done)-sent}', file=sys.__stdout__)
+                    if _send(merged):
+                        sent = len(done)
         except queue.Empty: result = '[超时]'
+        _typing_stop.set()
+        done, partial = _turn_parts(result)
+        rest = '\n\n'.join(done[sent:] + [partial] + ['\n\n[任务已完成]'])
+        if rest.strip(): _wx_send((_clean(rest))[-2000:])
         files = re.findall(r'\[FILE:([^\]]+)\]', result)
         bad = {'filepath', '<filepath>', 'path', '<path>', 'file_path', '<file_path>', '...'}
         files = [f for f in files if f.strip().lower() not in bad and (f if os.path.isabs(f) else os.path.join(_TEMP_DIR, f)) not in media_paths]
@@ -362,7 +445,7 @@ def on_message(bot, msg):
     threading.Thread(target=_handle, daemon=True).start()
 
 if __name__ == '__main__':
-    try: _lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM); _lock.bind(('127.0.0.1', 19528))
+    try: _lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM); _lock.bind(('127.0.0.1', 19531))
     except OSError: print('[WeChat] Another instance running, exiting.'); sys.exit(1)
     _logf = open(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'temp', 'wechatapp.log'), 'a', encoding='utf-8', buffering=1)
     sys.stdout = sys.stderr = _logf
