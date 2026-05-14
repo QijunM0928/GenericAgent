@@ -177,7 +177,7 @@ class PromptInput(TextArea):
     def __init__(self, placeholder: str = "", **kwargs) -> None:
         super().__init__(language=None, show_line_numbers=False, compact=True, placeholder=placeholder, **kwargs)
 
-    def _on_key(self, event: events.Key) -> None:
+    async def _on_key(self, event: events.Key) -> None:
         if event.key == "enter":
             # Enter → submit
             event.stop()
@@ -192,7 +192,7 @@ class PromptInput(TextArea):
             start, end = self.selection
             self._replace_via_keyboard("\n", start, end)
         else:
-            super()._on_key(event)
+            await super()._on_key(event)
 
 
 class GenericAgentTUI(App[None]):

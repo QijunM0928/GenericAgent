@@ -115,3 +115,27 @@ code_run('bash', 'gh pr status')
 code_run('bash', 'gh pr checks PR_NUMBER')
 code_run('bash', 'gh pr view PR_NUMBER --comments')
 ```
+
+## Upstream Merge 冲突解决策略
+**触发**：`git merge upstream/main` 产生冲突时
+
+### 核心原则
+- **文件级决策**：不搞全局统一策略，每个冲突文件单独判断
+- **三类策略**：
+
+| 文件类型 | 推荐策略 | 场景示例 |
+|---------|---------|---------|
+| 通用逻辑/bugfix | **theirs**（接受上游） | `agent_loop.py`（简化verbose）、`llmcore.py`（bugfix/feature） |
+| 本地定制UI/强耦合 | **ours**（保留本地） | `stapp.py`（pet v3 UI） |
+| 两边都有独特贡献 | **smart merge**（手工合成） | `agentmain.py`（上游init + 本地cli/bg启动）、`wechatapp.py`（上游streaming/typing + 本地room_id/群聊） |
+
+### Smart Merge 步骤
+1. **读两边**：确认冲突双方的意图（不是机械删标记）
+2. **保留最佳**：各取所长，删除冗余/退步代码
+3. **语法验证**：`python3 -m py_compile file.py` 确保可编译
+4. **功能检查**：跑 `git diff` 确认改了预期内容
+
+### Push 注意事项
+- 本地 main 合并后 push 到 **自己的 fork**（不是 upstream origin）
+- 检查 remote: `git remote -v`，push 到 `fork` 而不是 `origin`（origin=上游，fork=自己的副本）
+- 需要写权限：确保凭据（https/ssh）对应 fork 仓库有 push 权限

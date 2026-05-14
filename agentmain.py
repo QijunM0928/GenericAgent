@@ -17,9 +17,6 @@ def load_tool_schema(suffix=''):
     TOOLS_SCHEMA = json.loads(TS if os.name == 'nt' else TS.replace('powershell', 'bash'))
 load_tool_schema()
 
-def _norm_model_selector(value):
-    return str(value or '').strip().lower()
-
 lang_suffix = '_en' if os.environ.get('GA_LANG', '') == 'en' else ''
 mem_dir = os.path.join(script_dir, 'memory')
 if not os.path.exists(mem_dir): os.makedirs(mem_dir)
@@ -75,12 +72,9 @@ class GenericAgent:
                     else: llm_sessions[i] = ToolClient(mixin)
                 except Exception as e: print(f'\n\n\n[ERROR] Failed to init MixinSession with cfg {s["mixin_cfg"]}: {e}!!!\n\n')
         self.llmclients = llm_sessions
-        self.llmclients = llm_sessions
-        if not self.llmclients:
-            raise RuntimeError('[ERROR] No LLM config found. Please create mykey.py from mykey_template.py.')
         self.llmclient = self.llmclients[self.llm_no%len(self.llmclients)]
         if oldhistory: self.llmclient.backend.history = oldhistory
-
+    
     def next_llm(self, n=-1):
         self.load_llm_sessions()
         self.llm_no = ((self.llm_no + 1) if n < 0 else n) % len(self.llmclients)
@@ -100,27 +94,6 @@ class GenericAgent:
         if isinstance(b, dict): return 'BADCONFIG_MIXIN'
         if model: return b.backend.model.lower()
         return f"{type(b.backend).__name__}/{b.backend.name}"
-    def select_llm(self, selector):
-        s = _norm_model_selector(selector)
-        if not s:
-            raise ValueError('empty model selector')
-        if re.fullmatch(r'\d+', s):
-            self.next_llm(int(s))
-            return self.llm_no
-        matches = []
-        for i, client in enumerate(self.llmclients):
-            backend = getattr(client, 'backend', None)
-            haystack = ' '.join(str(x or '') for x in [
-                self.get_llm_name(client),
-                getattr(backend, 'name', ''),
-                getattr(backend, 'model', ''),
-            ]).lower()
-            if s in haystack:
-                matches.append(i)
-        if not matches:
-            raise ValueError(f'unknown model: {selector}')
-        self.next_llm(matches[0])
-        return self.llm_no
 
     def abort(self):
         if not self.is_running: return
@@ -204,28 +177,11 @@ if __name__ == '__main__':
     parser.add_argument('--task', metavar='IODIR', help='一次性任务模式(文件IO)')
     parser.add_argument('--reflect', metavar='SCRIPT', help='反射模式：加载监控脚本，check()触发时发任务')
     parser.add_argument('--input', help='prompt')
-    parser.add_argument('--llm_no', type=int, default=None)
+    parser.add_argument('--llm_no', type=int, default=0)
     parser.add_argument('--verbose', action='store_true')
-    parser.add_argument('--cli', action='store_true', help='启动 Claude Code 风格 TUI 终端')
-    parser.add_argument('--bg', action='store_true', help='popen, print PID, exit')
     parser.add_argument('--nobg', action='store_true')
     args, _unknown = parser.parse_known_args()
     _reflect_args = dict(zip([k.lstrip('-') for k in _unknown[::2]], _unknown[1::2])) if _unknown else {}
-
-    if args.cli:
-        from frontends.cliapp import GenericAgentCLI
-        GenericAgentCLI(llm_no=args.llm_no, verbose=args.verbose).run()
-        sys.exit(0)
-
-    if args.bg:
-        import subprocess, platform
-        cmd = [sys.executable, os.path.abspath(__file__)] + [a for a in sys.argv[1:]] + ['--nobg']
-        d = os.path.join(script_dir, f'temp/{args.task}'); os.makedirs(d, exist_ok=True)
-        p = subprocess.Popen(cmd, cwd=script_dir,
-            creationflags=0x08000000 if platform.system() == 'Windows' else 0,
-            stdout=open(os.path.join(d, 'stdout.log'), 'w', encoding='utf-8'),
-            stderr=open(os.path.join(d, 'stderr.log'), 'w', encoding='utf-8'))
-        print(p.pid); sys.exit(0)
 
     if args.task and not args.nobg:
         import subprocess, platform
@@ -238,8 +194,7 @@ if __name__ == '__main__':
         print(p.pid); sys.exit(0)
 
     agent = GeneraticAgent()
-    if args.llm_no is not None:
-        agent.next_llm(args.llm_no)
+    agent.next_llm(args.llm_no)
     agent.verbose = args.verbose
     threading.Thread(target=agent.run, daemon=True).start()
 

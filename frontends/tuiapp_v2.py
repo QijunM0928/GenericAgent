@@ -186,6 +186,7 @@ COMMANDS = [
     ("/llm",      "[n]",              "查看 / 切换模型"),
     ("/btw",      "<question>",       "side question — 不打断主 agent"),
     ("/continue", "[n]",              "列出 / 恢复历史会话"),
+    ("/resume",   "[n]",              "同 /continue — 列出 / 恢复历史会话"),
     ("/export",   "clip|<file>|all",  "导出最后回复"),
     ("/restore",  "",                 "恢复上次模型响应日志"),
     ("/quit",     "",                 "退出"),
@@ -262,6 +263,29 @@ def _save_clipboard_image() -> Optional[str]:
     return None
 
 
+def _is_valid_image_file(path: str) -> bool:
+    """验证文件是有效的图片（大小 >= 1KB 且 PIL 可读取）。"""
+    import struct
+    try:
+        if os.path.getsize(path) < 1024:
+            return False
+        from PIL import Image
+        with Image.open(path) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
+
+
+def _cleanup_temp_file(path: str) -> None:
+    """安全删除临时文件（仅限 genericagent_tui_clipboard 目录）。"""
+    try:
+        if path and path.startswith(os.path.join(tempfile.gettempdir(), "genericagent_tui_clipboard")):
+            os.remove(path)
+    except Exception:
+        pass
+
+
 class InputArea(TextArea):
     """多行输入框：Enter 发送 / Ctrl+J 等换行 / 粘贴 >2 行收为 [Pasted text #N +M lines]。"""
     _PASTE_RE = re.compile(r'\[Pasted text #(\d+) \+\d+ lines\]')
@@ -328,6 +352,10 @@ class InputArea(TextArea):
     def _paste_image_from_clipboard(self) -> bool:
         path = _save_clipboard_image()
         if not path:
+            return False
+        # 防御性验证：过滤 IME 切换等瞬态剪贴板假象（空/极小文件或非图片）
+        if not _is_valid_image_file(path):
+            self._cleanup_temp_file(path)
             return False
         self._paste_counter += 1
         sid = self._paste_counter
@@ -1137,6 +1165,7 @@ class GenericAgentTUI(App[None]):
             "restore": self._cmd_restore,
             "btw": lambda a, r: self._cmd_btw(a, r),
             "continue": lambda a, r: self._cmd_continue(a, r),
+            "resume":   lambda a, r: self._cmd_continue(a, r),
             "quit": lambda *_: self.exit(), "exit": lambda *_: self.exit(),
         }
 
@@ -1315,9 +1344,13 @@ class GenericAgentTUI(App[None]):
 
     def _cmd_continue(self, args, raw):
         sess = self.current
+        # /resume 视为 /continue
+        normalized = (raw or "").strip()
+        if normalized.startswith("/resume"):
+            normalized = "/continue" + normalized[7:]
         # /continue N 时先把 path 锁住：handle_frontend_command 会先 snapshot 当前日志，
         # 之后 list_sessions 的索引会偏，必须在 handle 之前解析
-        m = re.match(r"/continue\s+(\d+)\s*$", (raw or "").strip())
+        m = re.match(r"/continue\s+(\d+)\s*$", normalized)
         target = None
         if m:
             sessions = continue_list(exclude_pid=os.getpid())
@@ -1325,7 +1358,7 @@ class GenericAgentTUI(App[None]):
             if 0 <= idx < len(sessions):
                 target = sessions[idx][0]
         try:
-            result = continue_handle(sess.agent, raw)
+            result = continue_handle(sess.agent, normalized)
         except Exception as e:
             result = f"❌ /continue 失败: {e}"
         # 成功恢复：把历史 user/assistant 消息塞进当前 session 的 messages
@@ -1616,7 +1649,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list[str]] = None) -> int:
     build_arg_parser().parse_args(argv)
-    GenericAgentTUI().run(mouse=sys.platform != "darwin")
+    GenericAgentTUI().run(mouse=True)
     return 0
 
 
