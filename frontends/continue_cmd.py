@@ -5,6 +5,9 @@ import ast, glob, json, os, re, time
 _LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         'temp', 'model_responses')
 _LOG_GLOB = os.path.join(_LOG_DIR, 'model_responses_*.txt')
+# Old-format snapshot files (e.g. 0514_0919-0514_1037.txt)
+_SNAPSHOT_GLOB = os.path.join(_LOG_DIR,
+    '[0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9].txt')
 _BLOCK_RE = re.compile(r'^=== (Prompt|Response) ===.*?\n(.*?)(?=^=== (?:Prompt|Response) ===|\Z)',
                        re.DOTALL | re.MULTILINE)
 _SUMMARY_RE = re.compile(r'<summary>\s*(.*?)\s*</summary>', re.DOTALL)
@@ -101,6 +104,8 @@ def _parse_native_history(pairs):
 def list_sessions(exclude_pid=None):
     """Newest-first list of (path, mtime, first_user_text, n_rounds)."""
     files = glob.glob(_LOG_GLOB)
+    # Also include old-format snapshot files (e.g. 0514_0919-0514_1037.txt)
+    files += glob.glob(_SNAPSHOT_GLOB)
     if exclude_pid is not None:
         tag = f'model_responses_{exclude_pid}.txt'
         files = [f for f in files if not f.endswith(tag)]
