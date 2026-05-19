@@ -243,11 +243,8 @@ if prompt := st.chat_input("any task?"):
         result = handle_frontend_command(agent, cmd)
         history = extract_ui_messages(target) if target and result.startswith('✅') else None
         tail = [{"role": "assistant", "content": result, "time": ts}]
-        if history:
-            st.session_state.messages = history + tail
-        else:
-            st.session_state.messages = list(st.session_state.messages) + \
-                [{"role": "user", "content": cmd, "time": ts}] + tail
+        if history: st.session_state.messages = history + tail
+        else: st.session_state.messages = list(st.session_state.messages)+[{"role": "user", "content": cmd, "time": ts}]+tail
         _reset_and_rerun()
     st.session_state.messages.append({"role": "user", "content": prompt})
     if hasattr(agent, '_pet_req') and not prompt.startswith('/'): agent._pet_req('state=walk')
